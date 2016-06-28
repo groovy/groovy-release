@@ -1,0 +1,72 @@
+task promoteOnBintray {
+   group = "Post-passed phase"
+   description = "Releases the version on Bintray"
+}
+
+task synchronizeWithMavenCentral {
+   group = "Post-passed phase"
+   description = "Releases the version on Bintray"
+   dependsOn promoteOnBintray
+}
+
+task uploadToApacheDistServers {
+   group = "Post-passed phase"
+   description = "Moves the artifacts from the DEV subversion server to the DIST subversion server"
+   dependsOn promoteOnBintray    
+}
+
+task uploadDocumentationToGroovyWebsite {
+   group = "Post-passed phase"
+   description = "Uploads the documentation to the Groovy website server"
+   dependsOn uploadToApacheDistServers
+}
+
+task maybeUpdateDocumentationSymlink {
+   group = "Post-passed phase"
+   description = "Changes the symlink to the latest documentation if and only if it's a stable release"
+   dependsOn uploadDocumentationToGroovyWebsite
+}
+
+task publishToSDKman {
+   group = "Post-passed phase"
+   description = "Publishes the release on SDKman it and optionally makes it the default version"
+   dependsOn maybeUpdateDocumentationSymlink
+}
+
+task checkoutGroovyWebsite {
+   group = "Post-passed phase"
+   description = "Checks out the Groovy website repository"
+   dependsOn publishToSDKman
+}
+
+task updateGroovySitemap {
+   group = "Post-passed phase"
+   description = "Updates sitemap.groovy to include the newly released version and commits the result"
+   dependsOn checkoutGroovyWebsite
+}
+
+task pushGroovyWebsite {
+   group = "Post-passed phase"
+   description = "Pushes the Groovy website so that the new website is published"
+   dependsOn updateGroovySitemap
+}
+
+task waitForWebsitePublication {
+   group = "Post-passed phase"
+   description = "Polls the Groovy website to check if it is released" // check if http://groovy-lang.org/changelogs/changelog-2.4.7.html is created
+   dependsOn pushGroovyWebsite
+}
+
+task proposeAnnouncementEmail {
+   group = "Post-passed phase"
+   description = "Generates an [ANN] thread to be tweaked and sent to the dev@, user@ and announce@ mailing lists"
+   dependsOn waitForWebsitePublication
+}
+
+task announceReleaseOnSDKman {
+   group = "Post-passed phase"
+   description = "Announces the release on SDKman"
+   dependsOn proposeAnnouncementEmail
+}
+
+

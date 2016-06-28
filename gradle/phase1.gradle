@@ -1,0 +1,67 @@
+task checkout {
+   group = "Pre-vote phase"
+   description = "Checks out the Apache Groovy sources"
+}
+
+task createReleaseBranch {
+   group = "Pre-vote phase"
+   description = "Creates a release branch"
+   dependsOn checkout
+}
+
+task updateVersionProperties {
+   group = "Pre-vote phase"
+   description = "Promotes versions to non SNAPSHOT in gradle.properties and commits the result"
+   dependsOn createReleaseBranch
+}
+
+task buildAndUpload {
+   group = "Pre-vote phase"
+   description = "Builds Apache Groovy and publishes the Maven artifacts to the staging repository on Bintray"
+   // tasks: install dist artifactoryPublish
+   dependsOn updateVersionProperties
+}
+
+task createSvnTreeStructure {
+   group = "Pre-vote phase"
+   description = "Creates the required tree structure for artifacts (sources, binaries, sdk and documentation) before uploading them to the Apache servers"
+   dependsOn buildAndUpload
+}
+
+task signDistribution {
+   group = "Pre-vote phase"
+   description = "Signs the artifacts"
+   dependsOn createSvnTreeStructure
+}
+
+task createChecksums {
+   group = "Pre-vote phase"
+   description = "Creates SHA-256 checksums for all artifacts"
+   dependsOn signDistribution
+}
+
+task uploadToApacheDevServers {
+   group = "Pre-vote phase"
+   description = "Pushes the artifacts to the Apache DEV subversion repository"
+   dependsOn createChecksums
+}
+
+task createAndPushTag {
+   group = "Pre-vote phase"
+   description = "Creates a release tag and pushes it to the Apache Git repository"
+   dependsOn uploadToApacheDevServers
+}
+
+task releaseOnJira {
+   group = "Pre-vote phase"
+   description = "Releases the version on JIRA"
+   dependsOn createAndPushTag
+}
+
+task prepareVoteThread {
+   group = "Pre-vote phase"
+   description = "Generates a [VOTE] thread to be tweaked and sent to the dev@ mailing list"
+   dependsOn releaseOnJira
+}
+
+
