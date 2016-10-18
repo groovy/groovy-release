@@ -1,24 +1,39 @@
+buildscript {
+    repositories {
+        jcenter()
+    }
+
+    dependencies {
+        classpath 'org.ajoberstar:grgit:1.7.0'
+    }
+
+}
 apply from: 'gradle/phase1.gradle'
 apply from: 'gradle/phase2.gradle'
 
+ext {
+    grgitClass = org.ajoberstar.grgit.Grgit
+    repoUri = 'https://github.com/apache/groovy.git'
+}
+
 task phase1 {
-   dependsOn 'checkPrerequisites', 'prepareVoteThread'
-   doLast {
-     println "Pre-vote phase"
-   }
+    dependsOn 'checkPrerequisites', 'prepareVoteThread'
+    doLast {
+        println "Pre-vote phase"
+    }
 }
 
 task phase2 {
-   dependsOn 'checkPrerequisites', 'announceReleaseOnSDKman'
-   doLast {
-     println "Post-vote phase"
-   }
+    dependsOn 'checkPrerequisites', 'announceReleaseOnSDKman'
+    doLast {
+        println "Post-vote phase"
+    }
 }
 
 task checkPrerequisites {
-   doLast {
-      println "Check correct JDK is used for release"
-   }
+    doLast {
+        println "Check correct JDK is used for release"
+    }
 }
 
 
