@@ -1,11 +1,11 @@
 task checkout {
     group = "Pre-vote phase"
     description = "Checks out the Apache Groovy sources (assumes -Pbranch=branch_to_release)"
+    assert rootProject.hasProperty('branch')
+    rootProject.ext.branch = rootProject.getProperty('branch')
+    // fresh clone may be overkill but take safe option for now
+    rootProject.ext.stagingDir = "$project.buildDir/staging-$branch/"
     doLast {
-        assert rootProject.hasProperty('branch')
-        rootProject.ext.branch = rootProject.getProperty('branch')
-        // fresh clone may be overkill but take safe option for now
-        rootProject.ext.stagingDir = "$project.buildDir/staging-$branch/"
         def grgit
         if (rootProject.hasProperty('skipClone')) {
             grgit = grgitClass.open(dir: stagingDir)
@@ -25,10 +25,10 @@ task checkout {
 task confirmVersion {
     group = "Pre-vote phase"
     description = "Confirm version to release (assumes -PreleaseVersion=version_to_release)"
+    assert rootProject.hasProperty('releaseVersion')
+    rootProject.ext.relVersion = rootProject.getProperty('releaseVersion')
     dependsOn checkout
     doLast {
-        assert rootProject.hasProperty('releaseVersion')
-        rootProject.ext.relVersion = rootProject.getProperty('releaseVersion')
         def propsFile = file("$rootProject.ext.stagingDir/gradle.properties")
         def propsText = propsFile.text
         assert propsText.contains(relVersion + '-SNAPSHOT') && propsText.contains(relVersion + '.SNAPSHOT')
@@ -63,17 +63,29 @@ task updateVersionProperties {
     }
 }
 
-task buildAndUpload {
+task buildAndUpload { //(type: GradleBuild) {
     group = "Pre-vote phase"
     description = "Builds Apache Groovy and publishes the Maven artifacts to the staging repository on Bintray"
     // tasks: install dist artifactoryPublish
+//    dir = file(rootProject.ext.stagingDir)
+//    tasks = ['install', 'dist'/*, 'artifactoryPublish'*/]
     dependsOn updateVersionProperties
+    doLast {
+        // less declarative than ideal: using 'type: GradleBuild' confuses jarAllWithIndy which does use that approach
+        def groovyBuild = project.tasks.create(name: "groovyBuild", type: GradleBuild)
+        groovyBuild.dir = file(rootProject.ext.stagingDir)
+        groovyBuild.tasks = ['install', 'dist'/*, 'artifactoryPublish'*/]
+        groovyBuild.execute()
+    }
 }
 
 task createSvnTreeStructure {
     group = "Pre-vote phase"
     description = "Creates the required tree structure for artifacts (sources, binaries, sdk and documentation) before uploading them to the Apache servers"
     dependsOn buildAndUpload
+    doLast {
+        println 'Checking out svn'
+    }
 }
 
 task signDistribution {
