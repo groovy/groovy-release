@@ -27,11 +27,13 @@ task confirmVersion {
     description = "Confirm version to release (assumes -PreleaseVersion=version_to_release)"
     assert rootProject.hasProperty('releaseVersion')
     rootProject.ext.relVersion = rootProject.getProperty('releaseVersion')
+    rootProject.ext.numVersion = relVersion.find(/^[\d\.]+/)
     dependsOn checkout
     doLast {
         def propsFile = file("$rootProject.ext.stagingDir/gradle.properties")
         def propsText = propsFile.text
-        assert propsText.contains(relVersion + '-SNAPSHOT') && propsText.contains(relVersion + '.SNAPSHOT')
+        assert propsText.matches(/(?sm).*/ + numVersion + /[a-zA-Z\-]*\.SNAPSHOT.*/)
+        assert propsText.matches(/(?sm).*/ + numVersion + /[a-zA-Z\-]*-SNAPSHOT.*/)
     }
 }
 
@@ -63,18 +65,16 @@ task updateVersionProperties {
     }
 }
 
-task buildAndUpload { //(type: GradleBuild) {
+task buildAndUpload {
     group = "Pre-vote phase"
     description = "Builds Apache Groovy and publishes the Maven artifacts to the staging repository on Bintray"
-    // tasks: install dist artifactoryPublish
-//    dir = file(rootProject.ext.stagingDir)
-//    tasks = ['install', 'dist'/*, 'artifactoryPublish'*/]
     dependsOn updateVersionProperties
     doLast {
-        // less declarative than ideal: using 'type: GradleBuild' confuses jarAllWithIndy which does use that approach
+        // less declarative than ideal but using 'type: GradleBuild' on the
+        // task confuses jarAllWithIndy which does use the declarative approach
         def groovyBuild = project.tasks.create(name: "groovyBuild", type: GradleBuild)
         groovyBuild.dir = file(rootProject.ext.stagingDir)
-        groovyBuild.tasks = ['install', 'dist'/*, 'artifactoryPublish'*/]
+        groovyBuild.tasks = ['install', 'dist', 'artifactoryPublish']
         groovyBuild.execute()
     }
 }
