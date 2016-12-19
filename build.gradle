@@ -5,12 +5,13 @@ buildscript {
 
     dependencies {
         classpath 'org.ajoberstar:grgit:1.7.0'
+        classpath "at.bxm.gradleplugins:gradle-svntools-plugin:2.1"
     }
-
 }
+
 apply from: 'gradle/phase1.gradle'
 apply from: 'gradle/phase2.gradle'
-//apply plugin: "at.bxm.svntools"
+apply plugin: "at.bxm.svntools"
 
 ext {
     grgitClass = org.ajoberstar.grgit.Grgit

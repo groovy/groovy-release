@@ -1,10 +1,35 @@
-task checkout {
+import at.bxm.gradleplugins.svntools.tasks.SvnCheckout
+import at.bxm.gradleplugins.svntools.tasks.SvnCommit
+import at.bxm.gradleplugins.svntools.tasks.SvnAdd
+
+buildscript {
+    repositories {
+        jcenter()
+    }
+
+    dependencies {
+        classpath 'org.ajoberstar:grgit:1.7.0'
+        classpath "at.bxm.gradleplugins:gradle-svntools-plugin:2.1"
+    }
+}
+
+apply plugin: "at.bxm.svntools"
+
+svntools {
+    username = svnUsername
+    password = svnPassword
+}
+
+task init {
+    assert project.hasProperty('branch')
+    rootProject.ext.branch = project.getProperty('branch')
+    rootProject.ext.stagingDir = "$project.buildDir/staging-$branch/"
+}
+
+task checkout(dependsOn: init) {
     group = "Pre-vote phase"
     description = "Checks out the Apache Groovy sources (assumes -Pbranch=branch_to_release)"
-    assert rootProject.hasProperty('branch')
-    rootProject.ext.branch = rootProject.getProperty('branch')
-    // fresh clone may be overkill but take safe option for now
-    rootProject.ext.stagingDir = "$project.buildDir/staging-$branch/"
+    // fresh clone may be overkill but take safe option for now unless skipClone specified
     doLast {
         def grgit
         if (rootProject.hasProperty('skipClone')) {
@@ -30,10 +55,10 @@ task confirmVersion {
     rootProject.ext.numVersion = relVersion.find(/^[\d\.]+/)
     dependsOn checkout
     doLast {
-        def propsFile = file("$rootProject.ext.stagingDir/gradle.properties")
+        def propsFile = file("$stagingDir/gradle.properties")
         def propsText = propsFile.text
-        assert propsText.matches(/(?sm).*/ + numVersion + /[a-zA-Z\-]*\.SNAPSHOT.*/)
-        assert propsText.matches(/(?sm).*/ + numVersion + /[a-zA-Z\-]*-SNAPSHOT.*/)
+        assert propsText.matches(/(?sm).*$numVersion[a-zA-Z\-]*\.SNAPSHOT.*/)
+        assert propsText.matches(/(?sm).*$numVersion[a-zA-Z\-]*-SNAPSHOT.*/)
     }
 }
 
@@ -53,7 +78,7 @@ task updateVersionProperties {
     description = "Promotes versions to non SNAPSHOT in gradle.properties and commits the result"
     dependsOn createReleaseBranch
     doLast {
-        def propsFile = file("$rootProject.ext.stagingDir/gradle.properties")
+        def propsFile = file("$stagingDir/gradle.properties")
         def propsText = propsFile.text
         propsText = propsText.replace(relVersion + '-SNAPSHOT', relVersion)
         propsText = propsText.replace(relVersion + '.SNAPSHOT', relVersion)
@@ -73,25 +98,69 @@ task buildAndUpload {
         // less declarative than ideal but using 'type: GradleBuild' on the
         // task confuses jarAllWithIndy which does use the declarative approach
         def groovyBuild = project.tasks.create(name: "groovyBuild", type: GradleBuild)
-        groovyBuild.dir = file(rootProject.ext.stagingDir)
+        groovyBuild.dir = file(stagingDir)
         groovyBuild.tasks = ['install', 'dist', 'artifactoryPublish']
         groovyBuild.execute()
     }
 }
 
-task createSvnTreeStructure {
-    group = "Pre-vote phase"
-    description = "Creates the required tree structure for artifacts (sources, binaries, sdk and documentation) before uploading them to the Apache servers"
+task cleanSvnWorkspace(type: Delete) {
     dependsOn buildAndUpload
-    doLast {
-        println 'Checking out svn'
+    dependsOn init
+    delete "$project.buildDir/svn-workspace-$branch"
+}
+
+task prepareSvnWorkspace(type: SvnCheckout, dependsOn: cleanSvnWorkspace) {
+    svnUrl = "https://dist.apache.org/repos/dist/dev/groovy"
+    workspaceDir = "$project.buildDir/svn-workspace-$branch"
+}
+
+task copySvnDistro(type: Copy, dependsOn: prepareSvnWorkspace) {
+    description = "Creates the required tree structure for distribution"
+        from ("$stagingDir/target/distributions")
+        into "$project.buildDir/svn-workspace-$branch/$relVersion/distribution"
+        exclude 'apache-groovy-src-*'
     }
+
+task copySvnSources(type: Copy, dependsOn: prepareSvnWorkspace) {
+    description = "Creates the required tree structure for sources"
+        from ("$stagingDir/target/distributions")
+        into "$project.buildDir/svn-workspace-$branch/$relVersion/sources"
+        include 'apache-groovy-src-*'
+    }
+
+task addSvnFiles(type: SvnAdd, dependsOn: [copySvnDistro, copySvnSources]) {
+    description = "Adds the changed files to svn"
+    add "$project.buildDir/svn-workspace-$branch/$relVersion/"
+    recursive true
+}
+
+task commitDevDist(dependsOn: addSvnFiles) {
+    group = "Pre-vote phase"
+    description = "Commits the changed files to the Apache dist dev server"
+    doLast {
+        // less declarative than ideal but we want deferred operation since
+        // svn plugin assumes list of files to commit is known at config time
+        def groovyBuild = project.tasks.create(name: "groovyBuild", type: GradleBuild)
+        groovyBuild.startParameter.projectProperties = gradle.startParameter.projectProperties
+        groovyBuild.tasks = ['commitDevDistInternal']
+        groovyBuild.execute()
+    }
+}
+
+task commitDevDistInternal(type: SvnCommit) {
+    source << "$project.buildDir/svn-workspace-$branch/$relVersion/"
+    def tree = fileTree("$project.buildDir/svn-workspace-$branch/$relVersion/").include('**/*')
+    tree.visit {
+        source << "$project.buildDir/svn-workspace-$branch/$relVersion/$it.path"
+    }
+    commitMessage = "New version $branch $relVersion added"
 }
 
 task signDistribution {
     group = "Pre-vote phase"
     description = "Signs the artifacts"
-    dependsOn createSvnTreeStructure
+    dependsOn commitDevDist
 }
 
 task createChecksums {
