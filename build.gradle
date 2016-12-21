@@ -5,7 +5,8 @@ buildscript {
 
     dependencies {
         classpath 'org.ajoberstar:grgit:1.7.0'
-        classpath "at.bxm.gradleplugins:gradle-svntools-plugin:2.1"
+        classpath 'at.bxm.gradleplugins:gradle-svntools-plugin:2.1'
+        classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
     }
 }
 

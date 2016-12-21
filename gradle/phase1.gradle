@@ -9,7 +9,8 @@ buildscript {
 
     dependencies {
         classpath 'org.ajoberstar:grgit:1.7.0'
-        classpath "at.bxm.gradleplugins:gradle-svntools-plugin:2.1"
+        classpath 'at.bxm.gradleplugins:gradle-svntools-plugin:2.1'
+        classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
     }
 }
 
@@ -53,19 +54,43 @@ task confirmVersion {
     assert rootProject.hasProperty('releaseVersion')
     rootProject.ext.relVersion = rootProject.getProperty('releaseVersion')
     rootProject.ext.numVersion = relVersion.find(/^[\d\.]+/)
+    rootProject.ext.releaseBuild = !relVersion.toLowerCase().contains('snapshot')
     dependsOn checkout
     doLast {
         def propsFile = file("$stagingDir/gradle.properties")
-        def propsText = propsFile.text
-        assert propsText.matches(/(?sm).*$numVersion[a-zA-Z\-]*\.SNAPSHOT.*/)
-        assert propsText.matches(/(?sm).*$numVersion[a-zA-Z\-]*-SNAPSHOT.*/)
+        def versionLines = propsFile.text.readLines().findAll{ it.matches(/groovy.*Version.*/) }
+        def normalVersion = /(?sm).*$numVersion[a-zA-Z\-]*\.SNAPSHOT.*/
+        def bundleVersion = /(?sm).*$numVersion[a-zA-Z\-]*-SNAPSHOT.*/
+        versionLines.each {
+            assert it.matches(normalVersion) || it.matches(bundleVersion)
+        }
     }
 }
+
+task jiraPrecheck {
+    dependsOn confirmVersion
+    doLast {
+        def jira = new groovyx.net.http.RESTClient('https://issues.apache.org/jira/rest/api/2/')
+        def resp = jira.get(path: 'project/GROOVY/versions')
+        assert resp.status == 200
+        def versionFields = resp.data.find{ it.name == relVersion }
+        assert versionFields, "Version $relVersion not found in Jira!"
+        assert !versionFields.released, "Version $relVersion already released!"
+        rootProject.ext.versionId = versionFields.id
+
+        resp = jira.get(path: "version/$versionId/unresolvedIssueCount")
+        assert resp.data
+        if (resp.data.issuesUnresolvedCount) {
+            logger.warn "Warning found $resp.data.issuesUnresolvedCount unresolved issues for version $relVersion"
+        }
+    }
+}
+[jiraPrecheck, createReleaseBranch, updateVersionProperties]*.onlyIf{ project.hasProperty('releaseBuild') && releaseBuild }
 
 task createReleaseBranch {
     group = "Pre-vote phase"
     description = "Creates a release branch"
-    dependsOn confirmVersion
+    dependsOn jiraPrecheck
     doLast {
         def grgit = grgitClass.open(dir: stagingDir)
         grgit.checkout(branch: "REL-BRANCH-$relVersion", startPoint: branch, createBranch: true)
@@ -135,20 +160,42 @@ task addSvnFiles(type: SvnAdd, dependsOn: [copySvnDistro, copySvnSources]) {
     recursive true
 }
 
-task commitDevDist(dependsOn: addSvnFiles) {
+task createChecksums {
+    group = "Pre-vote phase"
+    description = "Creates SHA-256 checksums for all artifacts"
+    dependsOn addSvnFiles
+    doLast {
+        fileTree("$project.buildDir/svn-workspace-$branch/$relVersion/").files.each {
+            ant.checksum file: it, algorithm: 'SHA-256'
+        }
+    }
+}
+
+task signDistribution {
+    group = "Pre-vote phase"
+    description = "Signs the artifacts"
+    dependsOn createChecksums
+    doLast {
+        println 'TODO signDistribution'
+    }
+}
+
+task uploadToApacheDevServers {
+    dependsOn signDistribution
     group = "Pre-vote phase"
     description = "Commits the changed files to the Apache dist dev server"
     doLast {
         // less declarative than ideal but we want deferred operation since
         // svn plugin assumes list of files to commit is known at config time
-        def groovyBuild = project.tasks.create(name: "groovyBuild", type: GradleBuild)
-        groovyBuild.startParameter.projectProperties = gradle.startParameter.projectProperties
-        groovyBuild.tasks = ['commitDevDistInternal']
-        groovyBuild.execute()
+        // TODO: create feature request for svn plugin for depth argument or add source directory with recursive
+        def uploadBuild = project.tasks.create(name: "groovyBuild", type: GradleBuild)
+        uploadBuild.startParameter.projectProperties = gradle.startParameter.projectProperties
+        uploadBuild.tasks = ['uploadToApacheDevServersInternal']
+        uploadBuild.execute()
     }
 }
 
-task commitDevDistInternal(type: SvnCommit) {
+task uploadToApacheDevServersInternal(type: SvnCommit) {
     source << "$project.buildDir/svn-workspace-$branch/$relVersion/"
     def tree = fileTree("$project.buildDir/svn-workspace-$branch/$relVersion/").include('**/*')
     tree.visit {
@@ -157,40 +204,65 @@ task commitDevDistInternal(type: SvnCommit) {
     commitMessage = "New version $branch $relVersion added"
 }
 
-task signDistribution {
-    group = "Pre-vote phase"
-    description = "Signs the artifacts"
-    dependsOn commitDevDist
-}
-
-task createChecksums {
-    group = "Pre-vote phase"
-    description = "Creates SHA-256 checksums for all artifacts"
-    dependsOn signDistribution
-}
-
-task uploadToApacheDevServers {
-    group = "Pre-vote phase"
-    description = "Pushes the artifacts to the Apache DEV subversion repository"
-    dependsOn createChecksums
-}
-
 task createAndPushTag {
     group = "Pre-vote phase"
     description = "Creates a release tag and pushes it to the Apache Git repository"
     dependsOn uploadToApacheDevServers
+    doLast {
+        println 'TODO createAndPushTag'
+    }
 }
+[createAndPushTag, releaseOnJira, prepareVoteThread]*.onlyIf{ project.hasProperty('releaseBuild') && releaseBuild }
 
 task releaseOnJira {
     group = "Pre-vote phase"
     description = "Releases the version on JIRA"
     dependsOn createAndPushTag
+    doLast {
+        println 'TODO releaseOnJira'
+    }
 }
 
 task prepareVoteThread {
     group = "Pre-vote phase"
     description = "Generates a [VOTE] thread to be tweaked and sent to the dev@ mailing list"
     dependsOn releaseOnJira
+    doLast {
+        println """
+Below is a template email to tweak and send to the dev@ mailing list as a [VOTE] thread.
+If the vote passes after 72h, run phase2.
+If the vote fails or the release is cancelled, manually unrelease the version from Jira and start again.
+
+---------------- >8 -----------------
+
+Dear community,
+
+I am happy to start the VOTE thread for a Groovy $relVersion release!
+This release includes bugfixes for ...
+
+The changelog for this release can be found here: https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=12318123&version=12331941
+
+Tag: https://git1-us-west.apache.org/repos/asf?p=groovy.git;a=tag;h=19f70958f39f0cc5c6b4d3e9471fd297400647d2
+
+The artifacts to be voted on are located here: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/
+
+Release artifacts are signed with the following key: https://dist.apache.org/repos/dist/dev/groovy/KEYS
+
+Please vote on releasing this package as Apache Groovy $relVersion.
+
+The vote is open for the next 72 hours and passes if a majority of at least three +1 PMC votes are cast.
+
+[ ] +1 Release Apache Groovy $relVersion
+[ ]  0 I don't have a strong opinion about this, but I assume it's ok
+[ ] -1 Do not release Apache Groovy $relVersion because...
+
+Here is my vote:
+
++1 (binding)
+
+---------------- >8 -----------------
+"""
+    }
 }
 
 
