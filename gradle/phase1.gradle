@@ -15,6 +15,7 @@ buildscript {
 }
 
 apply plugin: "at.bxm.svntools"
+apply plugin: 'signing'
 
 svntools {
     username = svnUsername
@@ -85,7 +86,6 @@ task jiraPrecheck {
         }
     }
 }
-[jiraPrecheck, createReleaseBranch, updateVersionProperties]*.onlyIf{ project.hasProperty('releaseBuild') && releaseBuild }
 
 task createReleaseBranch {
     group = "Pre-vote phase"
@@ -114,6 +114,7 @@ task updateVersionProperties {
         println "@ $commit.abbreviatedId ($commit.shortMessage)"
     }
 }
+[jiraPrecheck, createReleaseBranch, updateVersionProperties]*.onlyIf{ project.hasProperty('releaseBuild') && releaseBuild }
 
 task buildAndUpload {
     group = "Pre-vote phase"
@@ -155,6 +156,7 @@ task copySvnSources(type: Copy, dependsOn: prepareSvnWorkspace) {
     }
 
 task addSvnFiles(type: SvnAdd, dependsOn: [copySvnDistro, copySvnSources]) {
+    // TODO check whether this is needed since commit seems to do an add anyway?
     description = "Adds the changed files to svn"
     add "$project.buildDir/svn-workspace-$branch/$relVersion/"
     recursive true
@@ -176,7 +178,9 @@ task signDistribution {
     description = "Signs the artifacts"
     dependsOn createChecksums
     doLast {
-        println 'TODO signDistribution'
+        fileTree("$project.buildDir/svn-workspace-$branch/$relVersion/").files.each {
+            signing.sign(it)
+        }
     }
 }
 
@@ -212,7 +216,6 @@ task createAndPushTag {
         println 'TODO createAndPushTag'
     }
 }
-[createAndPushTag, releaseOnJira, prepareVoteThread]*.onlyIf{ project.hasProperty('releaseBuild') && releaseBuild }
 
 task releaseOnJira {
     group = "Pre-vote phase"
@@ -265,4 +268,4 @@ Here is my vote:
     }
 }
 
-
+[createAndPushTag, releaseOnJira, prepareVoteThread]*.onlyIf{ project.hasProperty('releaseBuild') && releaseBuild }
