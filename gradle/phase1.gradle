@@ -1,6 +1,11 @@
+import at.bxm.gradleplugins.svntools.tasks.SvnAdd
 import at.bxm.gradleplugins.svntools.tasks.SvnCheckout
 import at.bxm.gradleplugins.svntools.tasks.SvnCommit
-import at.bxm.gradleplugins.svntools.tasks.SvnAdd
+import at.bxm.gradleplugins.svntools.api.SvnDepth
+import static groovyx.net.http.ContentType.*
+import org.apache.tools.ant.taskdefs.condition.Os
+import org.ajoberstar.grgit.Person
+import org.ajoberstar.grgit.util.JGitUtil
 
 buildscript {
     repositories {
@@ -18,14 +23,19 @@ apply plugin: "at.bxm.svntools"
 apply plugin: 'signing'
 
 svntools {
-    username = svnUsername
-    password = svnPassword
+    username = apacheUser
+    password = apachePassword
 }
 
 task init {
     assert project.hasProperty('branch')
     rootProject.ext.branch = project.getProperty('branch')
     rootProject.ext.stagingDir = "$project.buildDir/staging-$branch/"
+    System.setProperty('org.ajoberstar.grgit.auth.username', apacheUser)
+    System.setProperty('org.ajoberstar.grgit.auth.password', apachePassword)
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        System.setProperty('https.protocols', 'TLSv1.1')
+    }
 }
 
 task checkout(dependsOn: init) {
@@ -55,6 +65,7 @@ task confirmVersion {
     assert rootProject.hasProperty('releaseVersion')
     rootProject.ext.relVersion = rootProject.getProperty('releaseVersion')
     rootProject.ext.numVersion = relVersion.find(/^[\d\.]+/)
+    rootProject.ext.underVersion = relVersion.replace('.', '_').replace('-', '_').toUpperCase()
     rootProject.ext.releaseBuild = !relVersion.toLowerCase().contains('snapshot')
     dependsOn checkout
     doLast {
@@ -78,6 +89,7 @@ task jiraPrecheck {
         assert versionFields, "Version $relVersion not found in Jira!"
         assert !versionFields.released, "Version $relVersion already released!"
         rootProject.ext.versionId = versionFields.id
+        rootProject.ext.projectId = versionFields.projectId
 
         resp = jira.get(path: "version/$versionId/unresolvedIssueCount")
         assert resp.data
@@ -93,7 +105,7 @@ task createReleaseBranch {
     dependsOn jiraPrecheck
     doLast {
         def grgit = grgitClass.open(dir: stagingDir)
-        grgit.checkout(branch: "REL-BRANCH-$relVersion", startPoint: branch, createBranch: true)
+        grgit.checkout(branch: "REL_BRANCH_$underVersion", startPoint: branch, createBranch: true)
         println "Checked out: $grgit.branch.current.name"
     }
 }
@@ -116,18 +128,24 @@ task updateVersionProperties {
 }
 [jiraPrecheck, createReleaseBranch, updateVersionProperties]*.onlyIf{ project.hasProperty('releaseBuild') && releaseBuild }
 
-task buildAndUpload {
+// use Exec rather the GradleBuild to ensure we use the correct gradle version for the groovy version being built
+task buildAndUpload(type: Exec) {
     group = "Pre-vote phase"
     description = "Builds Apache Groovy and publishes the Maven artifacts to the staging repository on Bintray"
     dependsOn updateVersionProperties
-    doLast {
-        // less declarative than ideal but using 'type: GradleBuild' on the
-        // task confuses jarAllWithIndy which does use the declarative approach
-        def groovyBuild = project.tasks.create(name: "groovyBuild", type: GradleBuild)
-        groovyBuild.dir = file(stagingDir)
-        groovyBuild.tasks = ['install', 'dist', 'artifactoryPublish']
-        groovyBuild.execute()
+    workingDir stagingDir
+    ext.theArgs = []
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        theArgs += ['cmd', '/C', 'gradlew.bat']
+    } else {
+        theArgs << 'gradlew'
     }
+    theArgs << "-PbintrayUser=$bintrayUser"
+    theArgs << "-PbintrayKey=$bintrayPassword"
+    theArgs << "-PbintrayContext=https://groovy.jfrog.io/groovy/"
+    theArgs << "-PbintrayRepoKey=${releaseBuild ? 'libs-release-local' : 'libs-snapshot-local'}"
+    theArgs += ['install', 'dist', 'artifactoryPublish']
+    commandLine theArgs
 }
 
 task cleanSvnWorkspace(type: Delete) {
@@ -139,6 +157,7 @@ task cleanSvnWorkspace(type: Delete) {
 task prepareSvnWorkspace(type: SvnCheckout, dependsOn: cleanSvnWorkspace) {
     svnUrl = "https://dist.apache.org/repos/dist/dev/groovy"
     workspaceDir = "$project.buildDir/svn-workspace-$branch"
+    depth = SvnDepth.FILES // slightly more efficient if we have two concurrent releases (e.g. 2.4.latest, 2.5.0)
 }
 
 task copySvnDistro(type: Copy, dependsOn: prepareSvnWorkspace) {
@@ -162,37 +181,27 @@ task addSvnFiles(type: SvnAdd, dependsOn: [copySvnDistro, copySvnSources]) {
     recursive true
 }
 
-task createChecksums {
+task createChecksumsAndSign {
     group = "Pre-vote phase"
     description = "Creates SHA-256 checksums for all artifacts"
     dependsOn addSvnFiles
     doLast {
         fileTree("$project.buildDir/svn-workspace-$branch/$relVersion/").files.each {
             ant.checksum file: it, algorithm: 'SHA-256'
-        }
-    }
-}
-
-task signDistribution {
-    group = "Pre-vote phase"
-    description = "Signs the artifacts"
-    dependsOn createChecksums
-    doLast {
-        fileTree("$project.buildDir/svn-workspace-$branch/$relVersion/").files.each {
             signing.sign(it)
         }
     }
 }
 
 task uploadToApacheDevServers {
-    dependsOn signDistribution
+    dependsOn createChecksumsAndSign
     group = "Pre-vote phase"
     description = "Commits the changed files to the Apache dist dev server"
     doLast {
         // less declarative than ideal but we want deferred operation since
         // svn plugin assumes list of files to commit is known at config time
         // TODO: create feature request for svn plugin for depth argument or add source directory with recursive
-        def uploadBuild = project.tasks.create(name: "groovyBuild", type: GradleBuild)
+        def uploadBuild = project.tasks.create(name: "uploadBuild", type: GradleBuild)
         uploadBuild.startParameter.projectProperties = gradle.startParameter.projectProperties
         uploadBuild.tasks = ['uploadToApacheDevServersInternal']
         uploadBuild.execute()
@@ -213,7 +222,19 @@ task createAndPushTag {
     description = "Creates a release tag and pushes it to the Apache Git repository"
     dependsOn uploadToApacheDevServers
     doLast {
-        println 'TODO createAndPushTag'
+        def grgit = grgitClass.open(dir: stagingDir)
+        def tagName = "GROOVY_$underVersion"
+        def tag = null
+        try {
+            tag = JGitUtil.resolveTag(grgit.repository, tagName)
+        } catch(ignore) {}
+        assert !tag, "Tag $tagName already found!"
+        tag = grgit.tag.add(name: tagName,
+                message: "Release Groovy $relVersion",
+                tagger: new Person(apacheUser, apacheUser + '@apache.org')
+        )
+        ext.tagId = tag.commit.id
+        grgit.push(tags: true)
     }
 }
 
@@ -222,7 +243,14 @@ task releaseOnJira {
     description = "Releases the version on JIRA"
     dependsOn createAndPushTag
     doLast {
-        println 'TODO releaseOnJira'
+        def jira = new groovyx.net.http.RESTClient('https://issues.apache.org/jira/rest/api/2/')
+        jira.headers['Authorization'] = 'Basic '+"$apacheUser:$apachePassword".getBytes('iso-8859-1').encodeBase64()
+        def resp = jira.put(
+                path: "version/$versionId",
+                body: /{ "released": true, "releaseDate": "$now" }/,
+                requestContentType: JSON
+        )
+        assert resp.status == 200
     }
 }
 
@@ -233,7 +261,7 @@ task prepareVoteThread {
     doLast {
         println """
 Below is a template email to tweak and send to the dev@ mailing list as a [VOTE] thread.
-If the vote passes after 72h, run phase2.
+If the vote passes after 72h, proceed with phase2.
 If the vote fails or the release is cancelled, manually unrelease the version from Jira and start again.
 
 ---------------- >8 -----------------
@@ -243,9 +271,9 @@ Dear community,
 I am happy to start the VOTE thread for a Groovy $relVersion release!
 This release includes bugfixes for ...
 
-The changelog for this release can be found here: https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=12318123&version=12331941
+The changelog for this release can be found here: https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=$projectId&version=$versionId
 
-Tag: https://git1-us-west.apache.org/repos/asf?p=groovy.git;a=tag;h=19f70958f39f0cc5c6b4d3e9471fd297400647d2
+Tag: $repoBase?p=groovy.git;a=tag;h=refs/tags/GROOVY_$underVersion
 
 The artifacts to be voted on are located here: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/
 

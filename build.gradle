@@ -1,3 +1,24 @@
+/**
+ * Phase1 is invoked with:
+ *
+ *     gradlew -Pbranch=checkout_branch_name -PreleaseVersion=versionToRelease phase1
+ *
+ * e.g.:
+ *
+ *     gradlew -Pbranch=GROOVY_2_4_X -PreleaseVersion=2.4.8 phase 1
+ *
+ * Assumes you have the following properties set up, e.g. in ~/.gradle/gradle.properties
+ * or using -PpropName=propValue on the command line:
+ *
+ *     signing.keyId=hexId
+ *     signing.password=your_s3cr3t_passphrase
+ *     signing.secretKeyRingFile=path_to_secring.gpg
+ *     apacheUser=your_username
+ *     apachePassword=your_password
+ *     bintrayUser=bintray_username
+ *     bintrayPassword=bintray_secret_password
+ */
+
 buildscript {
     repositories {
         jcenter()
@@ -15,7 +36,9 @@ apply from: 'gradle/phase2.gradle'
 
 ext {
     grgitClass = org.ajoberstar.grgit.Grgit
-    repoUri = 'https://github.com/apache/groovy.git'
+    repoBase = 'https://git1-us-west.apache.org/repos/asf'
+    repoUri = "$repoBase/groovy.git"
+    now = new Date().format('yyyy-MM-dd')
 }
 
 task phase1 {
@@ -34,8 +57,8 @@ task phase2 {
 
 task checkPrerequisites {
     doLast {
-        println "Check correct JDK is used for release"
+        // TODO will in general be different for different groovy versions
+        // push into groovy build? already there but expose it
+        JavaVersion.current().java7Compatible
     }
 }
-
-
