@@ -96,6 +96,9 @@ task jiraPrecheck {
         if (resp.data.issuesUnresolvedCount) {
             logger.warn "Warning found $resp.data.issuesUnresolvedCount unresolved issues for version $relVersion"
         }
+        resp = jira.get(path: "version/$versionId/relatedIssueCounts")
+        assert resp.data
+        rootProject.ext.fixCount = resp.data.issuesFixedCount
     }
 }
 
@@ -117,8 +120,8 @@ task updateVersionProperties {
     doLast {
         def propsFile = file("$stagingDir/gradle.properties")
         def propsText = propsFile.text
-        propsText = propsText.replace(relVersion + '-SNAPSHOT', relVersion)
-        propsText = propsText.replace(relVersion + '.SNAPSHOT', relVersion)
+        propsText = propsText.replace(numVersion + '-SNAPSHOT', relVersion)
+        propsText = propsText.replace(numVersion + '.SNAPSHOT', relVersion)
         propsFile.text = propsText
         def grgit = grgitClass.open(dir: stagingDir)
         grgit.add(patterns: ['gradle.properties'])
@@ -271,9 +274,11 @@ Dear community,
 I am happy to start the VOTE thread for a Groovy $relVersion release!
 This release includes bugfixes for ...
 
-The changelog for this release can be found here: https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=$projectId&version=$versionId
+This release includes $fixCount bug fixes/improvements as outlined in the changelog:
+https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=$projectId&version=$versionId
 
 Tag: $repoBase?p=groovy.git;a=tag;h=refs/tags/GROOVY_$underVersion
+Tag commit id: $tagId
 
 The artifacts to be voted on are located here: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/
 
