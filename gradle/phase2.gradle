@@ -23,15 +23,38 @@ svntools {
     password = apachePassword
 }
 
+task jiraCheckPhase2 {
+    doLast {
+        def jira = new groovyx.net.http.RESTClient('https://issues.apache.org/jira/rest/api/2/')
+        def resp = jira.get(path: 'project/GROOVY/versions')
+        assert resp.status == 200
+        def versionFields = resp.data.find { it.name == relVersion }
+        assert versionFields, "Version $relVersion not found in Jira!"
+        assert versionFields.released, "Version $relVersion not yet released!"
+        project.ext.versionId = versionFields.id
+        project.ext.projectId = versionFields.projectId
+
+        resp = jira.get(path: "version/$versionId/unresolvedIssueCount")
+        assert resp.data
+        if (resp.data.issuesUnresolvedCount) {
+            logger.warn "Warning found $resp.data.issuesUnresolvedCount unresolved issues for version $relVersion"
+        }
+        resp = jira.get(path: "version/$versionId/relatedIssueCounts")
+        assert resp.data
+        project.ext.fixCount = resp.data.issuesFixedCount
+    }
+}
+
 task promoteOnBintray {
-   group = "Post-passed phase"
-   description = "Releases the version on Bintray"
+    group = "Post-passed phase"
+    description = "Releases the version on Bintray"
+    dependsOn promoteOnBintray
 }
 
 task synchronizeWithMavenCentral {
-   group = "Post-passed phase"
-   description = "Releases the version on Bintray"
-   dependsOn promoteOnBintray
+    group = "Post-passed phase"
+    description = "Releases the version on Bintray"
+    dependsOn promoteOnBintray
 }
 
 task cleanSvnDistWorkspace(type: Delete) {
@@ -49,7 +72,7 @@ task prepareSvnDistWorkspace(type: SvnCheckout, dependsOn: cleanSvnDistWorkspace
 
 task copyReleaseArtifacts(type: Copy, dependsOn: prepareSvnDistWorkspace) {
     description = "Copies all files from DEV to DIST"
-    from (devWorkspace)
+    from(devWorkspace)
     into distWorkspace
 }
 
@@ -87,64 +110,97 @@ task uploadToApacheDistServersInternal(type: SvnCommit) {
 //    source << distWorkspace
     def tree = fileTree(distWorkspace).include('**/*')
     tree.visit {
-println "$distWorkspace/$it.path"
+        println "$distWorkspace/$it.path"
 //        source << "$distWorkspace/$it.path"
     }
     commitMessage = "New version $branch $relVersion added"
 }
 
 task uploadDocumentationToGroovyWebsite {
-   group = "Post-passed phase"
-   description = "Uploads the documentation to the Groovy website server"
-   dependsOn uploadToApacheDistServers
+    group = "Post-passed phase"
+    description = "Uploads the documentation to the Groovy website server"
+    dependsOn uploadToApacheDistServers
 }
 
 task maybeUpdateDocumentationSymlink {
-   group = "Post-passed phase"
-   description = "Changes the symlink to the latest documentation if and only if it's a stable release"
-   dependsOn uploadDocumentationToGroovyWebsite
+    group = "Post-passed phase"
+    description = "Changes the symlink to the latest documentation if and only if it's a stable release"
+    dependsOn uploadDocumentationToGroovyWebsite
 }
 
 task publishToSDKman {
-   group = "Post-passed phase"
-   description = "Publishes the release on SDKman it and optionally makes it the default version"
-   dependsOn maybeUpdateDocumentationSymlink
+    group = "Post-passed phase"
+    description = "Publishes the release on SDKman it and optionally makes it the default version"
+    dependsOn maybeUpdateDocumentationSymlink
 }
 
 task checkoutGroovyWebsite {
-   group = "Post-passed phase"
-   description = "Checks out the Groovy website repository"
-   dependsOn publishToSDKman
+    group = "Post-passed phase"
+    description = "Checks out the Groovy website repository"
+    dependsOn publishToSDKman
 }
 
 task updateGroovySitemap {
-   group = "Post-passed phase"
-   description = "Updates sitemap.groovy to include the newly released version and commits the result"
-   dependsOn checkoutGroovyWebsite
+    group = "Post-passed phase"
+    description = "Updates sitemap.groovy to include the newly released version and commits the result"
+    dependsOn checkoutGroovyWebsite
 }
 
 task pushGroovyWebsite {
-   group = "Post-passed phase"
-   description = "Pushes the Groovy website so that the new website is published"
-   dependsOn updateGroovySitemap
+    group = "Post-passed phase"
+    description = "Pushes the Groovy website so that the new website is published"
+    dependsOn updateGroovySitemap
 }
 
 task waitForWebsitePublication {
-   group = "Post-passed phase"
-   description = "Polls the Groovy website to check if it is released" // check if http://groovy-lang.org/changelogs/changelog-2.4.7.html is created
-   dependsOn pushGroovyWebsite
+    group = "Post-passed phase"
+    description = "Polls the Groovy website to check if it is released"
+    // check if http://groovy-lang.org/changelogs/changelog-2.4.7.html is created
+    dependsOn pushGroovyWebsite
 }
 
 task proposeAnnouncementEmail {
-   group = "Post-passed phase"
-   description = "Generates an [ANN] thread to be tweaked and sent to the dev@, user@ and announce@ mailing lists"
-   dependsOn waitForWebsitePublication
+    group = "Post-passed phase"
+    description = "Generates an [ANN] thread to be tweaked and sent to the dev@, user@ and announce@ mailing lists"
+    dependsOn waitForWebsitePublication
+    doLast {
+        println """"
+Below is a template email to tweak and send to the dev@, user@ and announce@ mailing lists as an [ANNOUNCE] thread.
+
+---------------- >8 -----------------
+
+Dear community,
+
+We are pleased to announce version $versionId of Apache Groovy.
+Apache Groovy is a multi-facet programming language for the JVM.
+Further details can be found at the http://groovy.apache.org website.
+
+This release is a maintenance release of the 2.4.x branch, but contains critical fixes, in particular a fix
+for a 0-day vulnerability. Details can be found on http://groovy-lang.org/security.html
+
+It is strongly encouraged that all users upgrade to this version.
+
+This release includes $fixCount bug fixes/improvements as outlined in the changelog:
+https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=$projectId&version=$versionId
+
+Sources can be downloaded from: http://www.groovy-lang.org/download.html
+Convenience binaries, SDK and documentation can be found at: http://www.groovy-lang.org/download.html
+
+We would like to thank all people who contributed to this release.
+
+We welcome your help and feedback. For more information on how to
+report problems, and to get involved, visit the project website at
+https://groovy.apache.org/
+
+Best regards,
+"""
+    }
 }
 
 task announceReleaseOnSDKman {
-   group = "Post-passed phase"
-   description = "Announces the release on SDKman"
-   dependsOn proposeAnnouncementEmail
+    group = "Post-passed phase"
+    description = "Announces the release on SDKman"
+    dependsOn proposeAnnouncementEmail
 }
 
 
