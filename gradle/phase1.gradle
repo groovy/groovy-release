@@ -71,8 +71,8 @@ task confirmVersion {
     doLast {
         def propsFile = file("$stagingDir/gradle.properties")
         def versionLines = propsFile.text.readLines().findAll{ it.matches(/groovy.*Version.*/) }
-        def normalVersion = /(?sm).*$numVersion[a-zA-Z\-]*\.SNAPSHOT.*/
-        def bundleVersion = /(?sm).*$numVersion[a-zA-Z\-]*-SNAPSHOT.*/
+        def normalVersion = /(?ism).*$numVersion[a-zA-Z\-]*\.SNAPSHOT.*/
+        def bundleVersion = /(?ism).*$numVersion[a-zA-Z\-]*-SNAPSHOT.*/
         versionLines.each {
             assert it.matches(normalVersion) || it.matches(bundleVersion)
         }
@@ -274,7 +274,6 @@ If the vote fails or the release is cancelled, manually unrelease the version fr
 Dear community,
 
 I am happy to start the VOTE thread for a Groovy $relVersion release!
-This release includes bugfixes for ...
 
 This release includes $fixCount bug fixes/improvements as outlined in the changelog:
 https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=$projectId&version=$versionId
@@ -282,7 +281,9 @@ https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=$projectId&vers
 Tag: $repoBase?p=groovy.git;a=tag;h=refs/tags/GROOVY_$underVersion
 Tag commit id: $tagId
 
-The artifacts to be voted on are located here: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/
+The artifacts to be voted on are located as follows.
+Source release: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/sources
+Convenience binaries: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/distribution
 
 Release artifacts are signed with the following key: https://dist.apache.org/repos/dist/dev/groovy/KEYS
 
