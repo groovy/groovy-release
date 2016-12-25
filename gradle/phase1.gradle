@@ -179,7 +179,7 @@ task copySvnSources(type: Copy, dependsOn: prepareSvnDevWorkspace) {
         include 'apache-groovy-src-*'
     }
 
-task addSvnFiles(type: SvnAdd, dependsOn: [copySvnDistro, copySvnSources]) {
+task addSvnDevFiles(type: SvnAdd, dependsOn: [copySvnDistro, copySvnSources]) {
     // TODO check whether this is needed since commit seems to do an add anyway?
     description = "Adds the changed files to svn"
     add devWorkspace
@@ -189,7 +189,7 @@ task addSvnFiles(type: SvnAdd, dependsOn: [copySvnDistro, copySvnSources]) {
 task createChecksumsAndSign {
     group = "Pre-vote phase"
     description = "Creates SHA-256 checksums for all artifacts"
-    dependsOn addSvnFiles
+    dependsOn addSvnDevFiles
     doLast {
         fileTree(devWorkspace).files.each {
             ant.checksum file: it, algorithm: 'SHA-256'

@@ -1,3 +1,28 @@
+import at.bxm.gradleplugins.svntools.tasks.SvnAdd
+import at.bxm.gradleplugins.svntools.tasks.SvnCheckout
+import at.bxm.gradleplugins.svntools.tasks.SvnCommit
+import at.bxm.gradleplugins.svntools.tasks.SvnDelete
+import at.bxm.gradleplugins.svntools.api.SvnDepth
+
+buildscript {
+    repositories {
+        jcenter()
+    }
+
+    dependencies {
+        classpath 'org.ajoberstar:grgit:1.7.0'
+        classpath 'at.bxm.gradleplugins:gradle-svntools-plugin:2.1'
+        classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
+    }
+}
+
+apply plugin: "at.bxm.svntools"
+
+svntools {
+    username = apacheUser
+    password = apachePassword
+}
+
 task promoteOnBintray {
    group = "Post-passed phase"
    description = "Releases the version on Bintray"
@@ -9,10 +34,63 @@ task synchronizeWithMavenCentral {
    dependsOn promoteOnBintray
 }
 
+task cleanSvnDistWorkspace(type: Delete) {
+    dependsOn synchronizeWithMavenCentral
+    project.ext.distWorkspaceRoot = "$project.buildDir/svn-dist-workspace-$branch"
+    delete distWorkspaceRoot
+}
+
+task prepareSvnDistWorkspace(type: SvnCheckout, dependsOn: cleanSvnDistWorkspace) {
+    svnUrl = "https://dist.apache.org/repos/dist/release/groovy"
+    workspaceDir = distWorkspaceRoot
+    rootProject.ext.distWorkspace = "$distWorkspaceRoot/$relVersion"
+    depth = SvnDepth.FILES // slightly more efficient if we have two concurrent releases (e.g. 2.4.latest, 2.5.0)
+}
+
+task copyReleaseArtifacts(type: Copy, dependsOn: prepareSvnDistWorkspace) {
+    description = "Copies all files from DEV to DIST"
+    from (devWorkspace)
+    into distWorkspace
+}
+
+task addSvnDistFiles(type: SvnAdd, dependsOn: copyReleaseArtifacts) {
+    // TODO check whether this is needed since commit seems to do an add anyway?
+    description = "Adds the changed files to dist svn"
+    add distWorkspace
+    recursive true
+}
+
+task deleteSvnDevFiles(type: SvnDelete, dependsOn: addSvnDistFiles) {
+    description = "Deletes the changed files to svn"
+    delete devWorkspace
+}
+
 task uploadToApacheDistServers {
-   group = "Post-passed phase"
-   description = "Moves the artifacts from the DEV subversion server to the DIST subversion server"
-   dependsOn promoteOnBintray    
+    // svntools has no move so add and delete explicitly
+    dependsOn deleteSvnDevFiles
+    group = "Post-passed phase"
+    description = "Moves the artifacts from the DEV subversion server to the DIST subversion server"
+    doLast {
+        // less declarative than ideal but we want deferred operation since
+        // svn plugin assumes list of files to commit is known at config time
+        def uploadBuild = project.tasks.create(name: "uploadBuild", type: GradleBuild)
+        uploadBuild.startParameter.projectProperties = gradle.startParameter.projectProperties
+        uploadBuild.tasks = ['uploadToApacheDistServersInternal']
+        uploadBuild.execute()
+    }
+}
+
+task uploadToApacheDistServersInternal(type: SvnCommit) {
+    // TODO remove comments once testing is complete
+    source << devWorkspace
+    println distWorkspace
+//    source << distWorkspace
+    def tree = fileTree(distWorkspace).include('**/*')
+    tree.visit {
+println "$distWorkspace/$it.path"
+//        source << "$distWorkspace/$it.path"
+    }
+    commitMessage = "New version $branch $relVersion added"
 }
 
 task uploadDocumentationToGroovyWebsite {
