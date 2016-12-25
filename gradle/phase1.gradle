@@ -151,36 +151,38 @@ task buildAndUpload(type: Exec) {
     commandLine theArgs
 }
 
-task cleanSvnWorkspace(type: Delete) {
+task cleanSvnDevWorkspace(type: Delete) {
     dependsOn buildAndUpload
     dependsOn init
-    delete "$project.buildDir/svn-workspace-$branch"
+    project.ext.devWorkspaceRoot = "$project.buildDir/svn-dev-workspace-$branch"
+    delete devWorkspaceRoot
 }
 
-task prepareSvnWorkspace(type: SvnCheckout, dependsOn: cleanSvnWorkspace) {
+task prepareSvnDevWorkspace(type: SvnCheckout, dependsOn: cleanSvnDevWorkspace) {
     svnUrl = "https://dist.apache.org/repos/dist/dev/groovy"
-    workspaceDir = "$project.buildDir/svn-workspace-$branch"
+    workspaceDir = devWorkspaceRoot
+    rootProject.ext.devWorkspace = "$devWorkspaceRoot/$relVersion"
     depth = SvnDepth.FILES // slightly more efficient if we have two concurrent releases (e.g. 2.4.latest, 2.5.0)
 }
 
-task copySvnDistro(type: Copy, dependsOn: prepareSvnWorkspace) {
+task copySvnDistro(type: Copy, dependsOn: prepareSvnDevWorkspace) {
     description = "Creates the required tree structure for distribution"
         from ("$stagingDir/target/distributions")
-        into "$project.buildDir/svn-workspace-$branch/$relVersion/distribution"
+        into "$devWorkspace/distribution"
         exclude 'apache-groovy-src-*'
     }
 
-task copySvnSources(type: Copy, dependsOn: prepareSvnWorkspace) {
+task copySvnSources(type: Copy, dependsOn: prepareSvnDevWorkspace) {
     description = "Creates the required tree structure for sources"
         from ("$stagingDir/target/distributions")
-        into "$project.buildDir/svn-workspace-$branch/$relVersion/sources"
+        into "$devWorkspace/sources"
         include 'apache-groovy-src-*'
     }
 
 task addSvnFiles(type: SvnAdd, dependsOn: [copySvnDistro, copySvnSources]) {
     // TODO check whether this is needed since commit seems to do an add anyway?
     description = "Adds the changed files to svn"
-    add "$project.buildDir/svn-workspace-$branch/$relVersion/"
+    add devWorkspace
     recursive true
 }
 
@@ -189,7 +191,7 @@ task createChecksumsAndSign {
     description = "Creates SHA-256 checksums for all artifacts"
     dependsOn addSvnFiles
     doLast {
-        fileTree("$project.buildDir/svn-workspace-$branch/$relVersion/").files.each {
+        fileTree(devWorkspace).files.each {
             ant.checksum file: it, algorithm: 'SHA-256'
             signing.sign(it)
         }
@@ -212,10 +214,10 @@ task uploadToApacheDevServers {
 }
 
 task uploadToApacheDevServersInternal(type: SvnCommit) {
-    source << "$project.buildDir/svn-workspace-$branch/$relVersion/"
-    def tree = fileTree("$project.buildDir/svn-workspace-$branch/$relVersion/").include('**/*')
+    source << devWorkspace
+    def tree = fileTree(devWorkspace).include('**/*')
     tree.visit {
-        source << "$project.buildDir/svn-workspace-$branch/$relVersion/$it.path"
+        source << "$devWorkspace/$it.path"
     }
     commitMessage = "New version $branch $relVersion added"
 }
@@ -236,7 +238,7 @@ task createAndPushTag {
                 message: "Release Groovy $relVersion",
                 tagger: new Person(apacheUser, apacheUser + '@apache.org')
         )
-        ext.tagId = tag.commit.id
+        project.ext.tagId = tag.commit.id
         grgit.push(tags: true)
     }
 }
