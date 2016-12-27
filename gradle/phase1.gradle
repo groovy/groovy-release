@@ -1,11 +1,13 @@
+import at.bxm.gradleplugins.svntools.api.SvnDepth
 import at.bxm.gradleplugins.svntools.tasks.SvnAdd
 import at.bxm.gradleplugins.svntools.tasks.SvnCheckout
 import at.bxm.gradleplugins.svntools.tasks.SvnCommit
-import at.bxm.gradleplugins.svntools.api.SvnDepth
-import static groovyx.net.http.ContentType.*
-import org.apache.tools.ant.taskdefs.condition.Os
+import groovyx.net.http.RESTClient
 import org.ajoberstar.grgit.Person
 import org.ajoberstar.grgit.util.JGitUtil
+import org.apache.tools.ant.taskdefs.condition.Os
+
+import static groovyx.net.http.ContentType.JSON
 
 buildscript {
     repositories {
@@ -29,8 +31,8 @@ svntools {
 
 task init {
     assert project.hasProperty('branch')
-    rootProject.ext.branch = project.getProperty('branch')
-    rootProject.ext.stagingDir = "$project.buildDir/staging-$branch/"
+    project.ext.branch = project.getProperty('branch')
+    project.ext.stagingDir = "$project.buildDir/staging-$branch/"
     System.setProperty('org.ajoberstar.grgit.auth.username', apacheUser)
     System.setProperty('org.ajoberstar.grgit.auth.password', apachePassword)
     if (Os.isFamily(Os.FAMILY_WINDOWS)) {
@@ -44,13 +46,13 @@ task checkout(dependsOn: init) {
     // fresh clone may be overkill but take safe option for now unless skipClone specified
     doLast {
         def grgit
-        if (rootProject.hasProperty('skipClone')) {
+        if (project.hasProperty('skipClone')) {
             grgit = grgitClass.open(dir: stagingDir)
         } else {
             println "Cloning $repoUri to $stagingDir. This may take a few minutes ..."
             grgit = grgitClass.clone(dir: stagingDir, uri: repoUri, refToCheckout: branch)
         }
-        grgit.checkout(branch: rootProject.getProperty('branch'))
+        grgit.checkout(branch: project.getProperty('branch'))
         def id = grgit.head().abbreviatedId
         def message = grgit.head().shortMessage
         def dir = file(stagingDir)
@@ -62,15 +64,15 @@ task checkout(dependsOn: init) {
 task confirmVersion {
     group = "Pre-vote phase"
     description = "Confirm version to release (assumes -PreleaseVersion=version_to_release)"
-    assert rootProject.hasProperty('releaseVersion')
-    rootProject.ext.relVersion = rootProject.getProperty('releaseVersion')
-    rootProject.ext.numVersion = relVersion.find(/^[\d\.]+/)
-    rootProject.ext.underVersion = relVersion.replace('.', '_').replace('-', '_').toUpperCase()
-    rootProject.ext.releaseBuild = !relVersion.toLowerCase().contains('snapshot')
+    assert project.hasProperty('releaseVersion')
+    project.ext.relVersion = project.getProperty('releaseVersion')
+    project.ext.numVersion = relVersion.find(/^[\d\.]+/)
+    project.ext.underVersion = relVersion.replace('.', '_').replace('-', '_').toUpperCase()
+    project.ext.releaseBuild = !relVersion.toLowerCase().contains('snapshot')
     dependsOn checkout
     doLast {
         def propsFile = file("$stagingDir/gradle.properties")
-        def versionLines = propsFile.text.readLines().findAll{ it.matches(/groovy.*Version.*/) }
+        def versionLines = propsFile.text.readLines().findAll { it.matches(/groovy.*Version.*/) }
         def normalVersion = /(?ism).*$numVersion[a-zA-Z\-]*\.SNAPSHOT.*/
         def bundleVersion = /(?ism).*$numVersion[a-zA-Z\-]*-SNAPSHOT.*/
         versionLines.each {
@@ -79,26 +81,31 @@ task confirmVersion {
     }
 }
 
+task checkCompatibility(type: GradleBuild, dependsOn: confirmVersion) {
+    dir = stagingDir
+    tasks = ['checkCompatibility']
+}
+
 task jiraPrecheck {
-    dependsOn confirmVersion
+    dependsOn checkCompatibility
     doLast {
-        def jira = new groovyx.net.http.RESTClient('https://issues.apache.org/jira/rest/api/2/')
+        def jira = new RESTClient('https://issues.apache.org/jira/rest/api/2/')
         def resp = jira.get(path: 'project/GROOVY/versions')
-        assert resp.status == 200
-        def versionFields = resp.data.find{ it.name == relVersion }
+        assert resp.status == 200 && resp.data
+        def versionFields = resp.data.find { it.name == relVersion }
         assert versionFields, "Version $relVersion not found in Jira!"
         assert !versionFields.released, "Version $relVersion already released!"
-        rootProject.ext.versionId = versionFields.id
-        rootProject.ext.projectId = versionFields.projectId
+        project.ext.versionId = versionFields.id
+        project.ext.projectId = versionFields.projectId
 
         resp = jira.get(path: "version/$versionId/unresolvedIssueCount")
-        assert resp.data
+        assert resp.status == 200 && resp.data
         if (resp.data.issuesUnresolvedCount) {
             logger.warn "Warning found $resp.data.issuesUnresolvedCount unresolved issues for version $relVersion"
         }
         resp = jira.get(path: "version/$versionId/relatedIssueCounts")
-        assert resp.data
-        rootProject.ext.fixCount = resp.data.issuesFixedCount
+        assert resp.status == 200 && resp.data
+        project.ext.fixCount = resp.data.issuesFixedCount
     }
 }
 
@@ -129,7 +136,9 @@ task updateVersionProperties {
         println "@ $commit.abbreviatedId ($commit.shortMessage)"
     }
 }
-[jiraPrecheck, createReleaseBranch, updateVersionProperties]*.onlyIf{ project.hasProperty('releaseBuild') && releaseBuild }
+[jiraPrecheck, createReleaseBranch, updateVersionProperties]*.onlyIf {
+    project.hasProperty('releaseBuild') && releaseBuild
+}
 
 // use Exec rather the GradleBuild to ensure we use the correct gradle version for the groovy version being built
 task buildAndUpload(type: Exec) {
@@ -161,23 +170,23 @@ task cleanSvnDevWorkspace(type: Delete) {
 task prepareSvnDevWorkspace(type: SvnCheckout, dependsOn: cleanSvnDevWorkspace) {
     svnUrl = "https://dist.apache.org/repos/dist/dev/groovy"
     workspaceDir = devWorkspaceRoot
-    rootProject.ext.devWorkspace = "$devWorkspaceRoot/$relVersion"
+    project.ext.devWorkspace = "$devWorkspaceRoot/$relVersion"
     depth = SvnDepth.FILES // slightly more efficient if we have two concurrent releases (e.g. 2.4.latest, 2.5.0)
 }
 
 task copySvnDistro(type: Copy, dependsOn: prepareSvnDevWorkspace) {
     description = "Creates the required tree structure for distribution"
-        from ("$stagingDir/target/distributions")
-        into "$devWorkspace/distribution"
-        exclude 'apache-groovy-src-*'
-    }
+    from("$stagingDir/target/distributions")
+    into "$devWorkspace/distribution"
+    exclude 'apache-groovy-src-*'
+}
 
 task copySvnSources(type: Copy, dependsOn: prepareSvnDevWorkspace) {
     description = "Creates the required tree structure for sources"
-        from ("$stagingDir/target/distributions")
-        into "$devWorkspace/sources"
-        include 'apache-groovy-src-*'
-    }
+    from("$stagingDir/target/distributions")
+    into "$devWorkspace/sources"
+    include 'apache-groovy-src-*'
+}
 
 task addSvnDevFiles(type: SvnAdd, dependsOn: [copySvnDistro, copySvnSources]) {
     // TODO check whether this is needed since commit seems to do an add anyway?
@@ -232,7 +241,8 @@ task createAndPushTag {
         def tag = null
         try {
             tag = JGitUtil.resolveTag(grgit.repository, tagName)
-        } catch(ignore) {}
+        } catch (ignore) {
+        }
         assert !tag, "Tag $tagName already found!"
         tag = grgit.tag.add(name: tagName,
                 message: "Release Groovy $relVersion",
@@ -248,8 +258,8 @@ task releaseOnJira {
     description = "Releases the version on JIRA"
     dependsOn createAndPushTag
     doLast {
-        def jira = new groovyx.net.http.RESTClient('https://issues.apache.org/jira/rest/api/2/')
-        jira.headers['Authorization'] = 'Basic '+"$apacheUser:$apachePassword".getBytes('iso-8859-1').encodeBase64()
+        def jira = new RESTClient('https://issues.apache.org/jira/rest/api/2/')
+        jira.headers['Authorization'] = 'Basic ' + "$apacheUser:$apachePassword".getBytes('iso-8859-1').encodeBase64()
         def resp = jira.put(
                 path: "version/$versionId",
                 body: /{ "released": true, "releaseDate": "$now" }/,
@@ -304,4 +314,4 @@ Here is my vote:
     }
 }
 
-[createAndPushTag, releaseOnJira, prepareVoteThread]*.onlyIf{ project.hasProperty('releaseBuild') && releaseBuild }
+[createAndPushTag, releaseOnJira, prepareVoteThread]*.onlyIf { project.hasProperty('releaseBuild') && releaseBuild }

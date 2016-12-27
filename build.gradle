@@ -5,7 +5,7 @@
  *
  * e.g.:
  *
- *     gradlew -Pbranch=GROOVY_2_4_X -PreleaseVersion=2.4.8 phase 1
+ *     gradlew -Pbranch=GROOVY_2_4_X -PreleaseVersion=2.4.8 phase1
  *
  * Assumes you have the following properties set up, e.g. in ~/.gradle/gradle.properties
  * or using -PpropName=propValue on the command line:
@@ -17,6 +17,22 @@
  *     apachePassword=your_password
  *     bintrayUser=bintray_username
  *     bintrayPassword=bintray_secret_password
+ *
+ * Phase 2 is invoked with:
+ *
+ *     gradlew -Pbranch=checkout_branch_name -PreleaseVersion=versionToRelease phase2
+ *
+ * e.g.:
+ *
+ *     gradlew -Pbranch=GROOVY_2_4_X -PreleaseVersion=2.4.8 phase2
+ *
+ * Assumes you have the following properties set up, e.g. in ~/.gradle/gradle.properties
+ * or using -PpropName=propValue on the command line:
+ *
+ *     ciserver.user=ci_login_user
+ *     ciserver.password=ci_login_password
+ *     gvm.consumerKey=xxxxx
+ *     gvm.consumerToken=yyyyy
  */
 
 buildscript {
@@ -42,23 +58,15 @@ ext {
 }
 
 task phase1 {
-    dependsOn 'checkPrerequisites', 'prepareVoteThread'
+    dependsOn 'prepareVoteThread'
     doLast {
         println "Pre-vote phase"
     }
 }
 
 task phase2 {
-    dependsOn 'checkPrerequisites', 'announceReleaseOnSDKman'
+    dependsOn 'announceReleaseOnSDKman'
     doLast {
         println "Post-vote phase"
-    }
-}
-
-task checkPrerequisites {
-    doLast {
-        // TODO will in general be different for different groovy versions
-        // push into groovy build? already there but expose it
-        JavaVersion.current().java7Compatible
     }
 }
