@@ -1,8 +1,11 @@
+import at.bxm.gradleplugins.svntools.api.SvnDepth
 import at.bxm.gradleplugins.svntools.tasks.SvnAdd
 import at.bxm.gradleplugins.svntools.tasks.SvnCheckout
 import at.bxm.gradleplugins.svntools.tasks.SvnCommit
 import at.bxm.gradleplugins.svntools.tasks.SvnDelete
-import at.bxm.gradleplugins.svntools.api.SvnDepth
+import groovyx.net.http.RESTClient
+
+import static groovyx.net.http.ContentType.JSON
 
 buildscript {
     repositories {
@@ -13,14 +16,31 @@ buildscript {
         classpath 'org.ajoberstar:grgit:1.7.0'
         classpath 'at.bxm.gradleplugins:gradle-svntools-plugin:2.1'
         classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
+        classpath 'org.hidetake:gradle-ssh-plugin:2.7.0'
     }
 }
 
 apply plugin: "at.bxm.svntools"
+apply plugin: "org.hidetake.ssh"
 
 svntools {
     username = apacheUser
     password = apachePassword
+}
+
+ssh.settings {
+    dryRun = project.hasProperty('dryRun')
+//    knownHosts = file(System.getProperty('user.home') + '/.ssh/known_hosts')
+    knownHosts = allowAnyHosts
+}
+
+remotes {
+    ciServer {
+        host = 'ci.groovy-lang.org'
+        user = findProperty('ciserver.user')
+        password = findProperty('ciserver.password')
+        //identity = file('id_rsa')
+    }
 }
 
 task jiraCheckPhase2 {
@@ -120,18 +140,45 @@ task uploadDocumentationToGroovyWebsite {
     group = "Post-passed phase"
     description = "Uploads the documentation to the Groovy website server"
     dependsOn uploadToApacheDistServers
+    ssh.run {
+        session(remotes.ciServer) {
+            execute 'uname -a'
+            put from: "$stagingDir/target/distributions/apache-groovy-docs-${relVersion}.zip", into: '/var/www/docs/docs'
+            execute "unzip -d /var/www/docs/docs/ /var/www/docs/docs/apache-groovy-docs-${relVersion}.zip"
+            execute "chgrp -R teamcity /var/www/docs/docs/groovy-${relVersion}/"
+            execute "rm /var/www/docs/docs/apache-groovy-docs-${relVersion}.zip"
+        }
+    }
 }
 
 task maybeUpdateDocumentationSymlink {
     group = "Post-passed phase"
     description = "Changes the symlink to the latest documentation if and only if it's a stable release"
     dependsOn uploadDocumentationToGroovyWebsite
+    ssh.run {
+        session(remotes.ciServer) {
+            execute 'uname -a'
+            execute "ln -s /var/www/docs/docs/latest groovy-$relVersion"
+        }
+    }
 }
 
 task publishToSDKman {
     group = "Post-passed phase"
     description = "Publishes the release on SDKman it and optionally makes it the default version"
     dependsOn maybeUpdateDocumentationSymlink
+    doLast {
+        def sdkman = new groovyx.net.http.RESTClient('https://vendors.sdkman.io/')
+        sdkman.headers['consumer_key'] = consumerKey
+        sdkman.headers['consumer_token'] = consumerToken
+        def resp = jira.put(
+                path: '/announce/struct',
+                body: /{ "candidate": "groovy", "version": "$versionId", "hashtag" : "#groovylang" }/,
+                requestContentType: JSON
+        )
+        assert resp.status == 200
+        println resp.message
+    }
 }
 
 task checkoutGroovyWebsite {

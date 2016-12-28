@@ -81,9 +81,17 @@ task confirmVersion {
     }
 }
 
-task checkCompatibility(type: GradleBuild, dependsOn: confirmVersion) {
-    dir = stagingDir
-    tasks = ['checkCompatibility']
+// use Exec rather than GradleBuild to avoid any issues between gradle versions
+task checkCompatibility(type: Exec, dependsOn: confirmVersion) {
+    workingDir stagingDir
+    ext.theArgs = []
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        theArgs += ['cmd', '/C', 'gradlew.bat']
+    } else {
+        theArgs << 'gradlew'
+    }
+    theArgs << 'checkCompatibility'
+    commandLine theArgs
 }
 
 task jiraPrecheck {
