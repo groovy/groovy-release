@@ -89,18 +89,18 @@ task promoteOnBintray {
     doLast {
         println 'TODO promoteOnBintray'
     }
-    doLast {
-        def sdkman = new groovyx.net.http.RESTClient('https://vendors.sdkman.io/')
-        sdkman.headers['consumer_key'] = consumerKey
-        sdkman.headers['consumer_token'] = consumerToken
-        def resp = jira.put(
-                path: '/announce/struct',
-                body: /{ "candidate": "groovy", "version": "$versionId", "hashtag" : "#groovylang" }/,
-                requestContentType: JSON
-        )
-        assert resp.status == 200
-        println resp.message
-    }
+//    doLast {
+//        def sdkman = new groovyx.net.http.RESTClient('https://vendors.sdkman.io/')
+//        sdkman.headers['consumer_key'] = consumerKey
+//        sdkman.headers['consumer_token'] = consumerToken
+//        def resp = jira.put(
+//                path: '/announce/struct',
+//                body: /{ "candidate": "groovy", "version": "$versionId", "hashtag" : "#groovylang" }/,
+//                requestContentType: JSON
+//        )
+//        assert resp.status == 200
+//        println resp.message
+//    }
 }
 
 task synchronizeWithMavenCentral {
