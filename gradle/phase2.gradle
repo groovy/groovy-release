@@ -4,12 +4,16 @@ import at.bxm.gradleplugins.svntools.tasks.SvnCheckout
 import at.bxm.gradleplugins.svntools.tasks.SvnCommit
 import at.bxm.gradleplugins.svntools.tasks.SvnDelete
 import groovyx.net.http.RESTClient
+import org.ajoberstar.grgit.Credentials
 
-import static groovyx.net.http.ContentType.JSON
+//import static groovyx.net.http.ContentType.JSON
 
 buildscript {
     repositories {
         jcenter()
+        maven {
+            url "https://plugins.gradle.org/m2/"
+        }
     }
 
     dependencies {
@@ -17,11 +21,13 @@ buildscript {
         classpath 'at.bxm.gradleplugins:gradle-svntools-plugin:2.1'
         classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
         classpath 'org.hidetake:gradle-ssh-plugin:2.7.0'
+        classpath "gradle.plugin.io.sdkman:gradle-sdkvendor-plugin:1.1.1"
     }
 }
 
 apply plugin: "at.bxm.svntools"
 apply plugin: "org.hidetake.ssh"
+apply plugin: "io.sdkman.vendors"
 
 svntools {
     username = apacheUser
@@ -43,9 +49,20 @@ remotes {
     }
 }
 
+sdkman {
+    api = "https://vendors.sdkman.io/"
+    consumerKey = findProperty('gvm.consumerKey')
+    consumerToken = 'dummy'//findProperty('gvm.consumerPassword')
+    candidate = "groovy"
+    version = "$relVersion"
+    url = "http://groovy-lang.org/download.html"
+    //url = "http://www.apache.org/dyn/closer.cgi/groovy/${relVersion}/sources/apache-groovy-src-${relVersion}.zip"
+    hashtag = "#groovylang"
+}
+
 task jiraCheckPhase2 {
     doLast {
-        def jira = new groovyx.net.http.RESTClient('https://issues.apache.org/jira/rest/api/2/')
+        def jira = new RESTClient('https://issues.apache.org/jira/rest/api/2/')
         def resp = jira.get(path: 'project/GROOVY/versions')
         assert resp.status == 200
         def versionFields = resp.data.find { it.name == relVersion }
@@ -68,13 +85,31 @@ task jiraCheckPhase2 {
 task promoteOnBintray {
     group = "Post-passed phase"
     description = "Releases the version on Bintray"
-    dependsOn promoteOnBintray
+    dependsOn jiraCheckPhase2
+    doLast {
+        println 'TODO promoteOnBintray'
+    }
+    doLast {
+        def sdkman = new groovyx.net.http.RESTClient('https://vendors.sdkman.io/')
+        sdkman.headers['consumer_key'] = consumerKey
+        sdkman.headers['consumer_token'] = consumerToken
+        def resp = jira.put(
+                path: '/announce/struct',
+                body: /{ "candidate": "groovy", "version": "$versionId", "hashtag" : "#groovylang" }/,
+                requestContentType: JSON
+        )
+        assert resp.status == 200
+        println resp.message
+    }
 }
 
 task synchronizeWithMavenCentral {
     group = "Post-passed phase"
     description = "Releases the version on Bintray"
     dependsOn promoteOnBintray
+    doLast {
+        println 'TODO synchronizeWithMavenCentral'
+    }
 }
 
 task cleanSvnDistWorkspace(type: Delete) {
@@ -124,14 +159,12 @@ task uploadToApacheDistServers {
 }
 
 task uploadToApacheDistServersInternal(type: SvnCommit) {
-    // TODO remove comments once testing is complete
     source << devWorkspace
-    println distWorkspace
-//    source << distWorkspace
+    source << distWorkspace
     def tree = fileTree(distWorkspace).include('**/*')
     tree.visit {
-        println "$distWorkspace/$it.path"
-//        source << "$distWorkspace/$it.path"
+//        println "$distWorkspace/$it.path"
+        source << "$distWorkspace/$it.path"
     }
     commitMessage = "New version $branch $relVersion added"
 }
@@ -140,13 +173,15 @@ task uploadDocumentationToGroovyWebsite {
     group = "Post-passed phase"
     description = "Uploads the documentation to the Groovy website server"
     dependsOn uploadToApacheDistServers
-    ssh.run {
-        session(remotes.ciServer) {
-            execute 'uname -a'
-            put from: "$stagingDir/target/distributions/apache-groovy-docs-${relVersion}.zip", into: '/var/www/docs/docs'
-            execute "unzip -d /var/www/docs/docs/ /var/www/docs/docs/apache-groovy-docs-${relVersion}.zip"
-            execute "chgrp -R teamcity /var/www/docs/docs/groovy-${relVersion}/"
-            execute "rm /var/www/docs/docs/apache-groovy-docs-${relVersion}.zip"
+    doLast {
+        ssh.run {
+            session(remotes.ciServer) {
+                execute 'uname -a'
+                put from: "$stagingDir/target/distributions/apache-groovy-docs-${relVersion}.zip", into: '/var/www/docs/docs'
+                execute "unzip -d /var/www/docs/docs/ /var/www/docs/docs/apache-groovy-docs-${relVersion}.zip"
+                execute "chgrp -R teamcity /var/www/docs/docs/groovy-${relVersion}/"
+                execute "rm /var/www/docs/docs/apache-groovy-docs-${relVersion}.zip"
+            }
         }
     }
 }
@@ -155,62 +190,84 @@ task maybeUpdateDocumentationSymlink {
     group = "Post-passed phase"
     description = "Changes the symlink to the latest documentation if and only if it's a stable release"
     dependsOn uploadDocumentationToGroovyWebsite
-    ssh.run {
-        session(remotes.ciServer) {
-            execute 'uname -a'
-            execute "ln -s /var/www/docs/docs/latest groovy-$relVersion"
+    doLast {
+        ssh.run {
+            session(remotes.ciServer) {
+                execute 'uname -a'
+                execute "ln -s /var/www/docs/docs/latest groovy-$relVersion"
+            }
         }
     }
 }
 
 task publishToSDKman {
     group = "Post-passed phase"
-    description = "Publishes the release on SDKman it and optionally makes it the default version"
+    description = "Publishes the release on SDKman"
     dependsOn maybeUpdateDocumentationSymlink
-    doLast {
-        def sdkman = new groovyx.net.http.RESTClient('https://vendors.sdkman.io/')
-        sdkman.headers['consumer_key'] = consumerKey
-        sdkman.headers['consumer_token'] = consumerToken
-        def resp = jira.put(
-                path: '/announce/struct',
-                body: /{ "candidate": "groovy", "version": "$versionId", "hashtag" : "#groovylang" }/,
-                requestContentType: JSON
-        )
-        assert resp.status == 200
-        println resp.message
-    }
+    dependsOn sdkReleaseVersion
 }
+
+task makeDefaultOnSDKman {
+    group = "Post-passed phase"
+    description = "Make it the default version on SDKman"
+    dependsOn publishToSDKman
+    dependsOn sdkDefaultVersion
+}
+makeDefaultOnSDKman.onlyIf{ project.findProperty('makeDefault') }
 
 task checkoutGroovyWebsite {
     group = "Post-passed phase"
     description = "Checks out the Groovy website repository"
     dependsOn publishToSDKman
+    doLast {
+        if (!project.hasProperty('skipClone')) {
+            println "Cloning $websiteRepo to $stagingWebsiteDir. This may take a few minutes ..."
+            grgitClass.clone(dir: stagingWebsiteDir, uri: websiteRepo)
+        }
+    }
 }
 
 task updateGroovySitemap {
     group = "Post-passed phase"
     description = "Updates sitemap.groovy to include the newly released version and commits the result"
     dependsOn checkoutGroovyWebsite
+    doLast {
+        def sitemapFile = file("$stagingWebsiteDir/site/src/site/sitemap.groovy")
+        def sitemapText = propsFile.text
+        sitemapText = sitemapText.replace(numVersion + '-SNAPSHOT', relVersion)
+        sitemapText = sitemapText.replace(numVersion + '.SNAPSHOT', relVersion)
+        sitemapFile.text = propsText
+    }
 }
 
 task pushGroovyWebsite {
     group = "Post-passed phase"
     description = "Pushes the Groovy website so that the new website is published"
     dependsOn updateGroovySitemap
+    doLast {
+        def githubCredentials = new Credentials(username: githubUser, password: githubPassword)
+        def grgit = grgitClass.open(dir: stagingWebsiteDir, creds: githubCredentials)
+        grgit.add(patterns: ['sitemap.groovy'])
+        def commit = grgit.commit(message: "Release $relVersion: update sitemap")
+        println "@ $commit.abbreviatedId ($commit.shortMessage)"
+    }
 }
 
-task waitForWebsitePublication {
+task waitForWebsitePublication(dependsOn: pushGroovyWebsite) {
     group = "Post-passed phase"
     description = "Polls the Groovy website to check if it is released"
-    // check if http://groovy-lang.org/changelogs/changelog-2.4.7.html is created
-    dependsOn pushGroovyWebsite
+    // check if http://groovy-lang.org/changelogs/changelog-v.x.y.html is created
+    doLast {
+        println 'TODO waitForWebsitePublication'
+    }
 }
 
-task proposeAnnouncementEmail {
+task proposeAnnouncementEmail(dependsOn: waitForWebsitePublication) {
     group = "Post-passed phase"
     description = "Generates an [ANN] thread to be tweaked and sent to the dev@, user@ and announce@ mailing lists"
-    dependsOn waitForWebsitePublication
     doLast {
+        def includeSec = project.findProperty('includeSecurity')
+        def newRelease = numVersion.endsWith('.0')
         println """"
 Below is a template email to tweak and send to the dev@, user@ and announce@ mailing lists as an [ANNOUNCE] thread.
 
@@ -222,11 +279,17 @@ We are pleased to announce version $versionId of Apache Groovy.
 Apache Groovy is a multi-facet programming language for the JVM.
 Further details can be found at the http://groovy.apache.org website.
 
-This release is a maintenance release of the 2.4.x branch, but contains critical fixes, in particular a fix
-for a 0-day vulnerability. Details can be found on http://groovy-lang.org/security.html
+${ stableBuild ? (newRelease ? '''We are proud to announce this new version of Groovy.
+Your feedback on any unintentional glitches is welcome.''': '''This release is a maintenance release of the $branch branch.
+It is strongly encouraged that all users using prior
+versions on this branch upgrade to this version.''') : '''This is a pre-release
+of a new version of Groovy. We greatly appreciate any feedback you can give us when using this version..
+''' }
 
-It is strongly encouraged that all users upgrade to this version.
-
+${includeSec ? '''
+This release contains critical security fixes.
+Details can be found on http://groovy-lang.org/security.htm
+''' : '' }
 This release includes $fixCount bug fixes/improvements as outlined in the changelog:
 https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=$projectId&version=$versionId
 
@@ -244,10 +307,9 @@ Best regards,
     }
 }
 
-task announceReleaseOnSDKman {
+task announceReleaseOnSDKman(dependsOn: [proposeAnnouncementEmail, sdkAnnounceVersion]) {
     group = "Post-passed phase"
     description = "Announces the release on SDKman"
-    dependsOn proposeAnnouncementEmail
 }
 
 

@@ -222,9 +222,6 @@ task uploadToApacheDevServersInternal(type: SvnCommit, dependsOn: assumesRelVers
 
 task checkDevWorkspaceVersion(type: SvnVersion, dependsOn: [assumesRelVersion, uploadToApacheDevServersInternal]) {
     sourcePath = devWorkspaceRoot
-    doLast {
-        println svnVersion.minRevisionNumber
-    }
 }
 
 task createAndPushTag(dependsOn: [assumesRelVersion, checkDevWorkspaceVersion]) {
@@ -268,7 +265,7 @@ task releaseOnJira(dependsOn: [jiraPrecheck, createAndPushTag]) {
     }
 }
 
-task prepareVoteThread(dependsOn: releaseOnJira) {
+task prepareVoteThread(dependsOn: [assumesRelVersion, releaseOnJira]) {
     group = "Pre-vote phase"
     description = "Generates a [VOTE] thread to be tweaked and sent to the dev@ mailing list"
     doLast {
@@ -292,6 +289,7 @@ Tag commit id: $tagId
 The artifacts to be voted on are located as follows.
 Source release: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/sources
 Convenience binaries: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/distribution
+SVN version id: 17618: $svnVersion.minRevisionNumber
 
 Release artifacts are signed with the following key: https://dist.apache.org/repos/dist/dev/groovy/KEYS
 
