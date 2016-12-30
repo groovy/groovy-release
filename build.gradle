@@ -1,3 +1,5 @@
+import org.apache.tools.ant.taskdefs.condition.Os
+
 /**
  * Phase1 is invoked with:
  *
@@ -15,8 +17,8 @@
  *     signing.secretKeyRingFile=path_to_secring.gpg
  *     apacheUser=your_username
  *     apachePassword=your_password
- *     bintrayUser=bintray_username
- *     bintrayPassword=bintray_secret_password
+ *     artifactoryUser=bintray_username
+ *     artifactoryPassword=bintray_secret_password
  *
  * Phase 2 is invoked with:
  *
@@ -31,13 +33,22 @@
  *
  *     ciserver.user=ci_login_user
  *     ciserver.password=ci_login_password
+ *     githubUser=your_github_user
+ *     githubPassword=your_github_password
  *     gvm.consumerKey=xxxxx
  *     gvm.consumerToken=yyyyy
+ *     bintrayUser=aaaa
+ *     bintrayPassword=bbbb
+ *     centralUser=cccc
+ *     centralKey=dddd
  */
 
 buildscript {
     repositories {
         jcenter()
+        maven {
+            url "https://plugins.gradle.org/m2/"
+        }
     }
 
     dependencies {
@@ -45,18 +56,45 @@ buildscript {
         classpath 'at.bxm.gradleplugins:gradle-svntools-plugin:2.1'
         classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
         classpath 'org.hidetake:gradle-ssh-plugin:2.7.0'
+        classpath "gradle.plugin.io.sdkman:gradle-sdkvendor-plugin:1.1.1"
     }
 }
-
-apply from: 'gradle/phase1.gradle'
-apply from: 'gradle/phase2.gradle'
 
 ext {
     grgitClass = org.ajoberstar.grgit.Grgit
     repoBase = 'https://git1-us-west.apache.org/repos/asf'
     repoUri = "$repoBase/groovy.git"
+    websiteRepo = 'https://github.com/groovy/groovy-website'
     now = new Date().format('yyyy-MM-dd')
+    branch = project.findProperty('branch')
+    stagingDir = "$project.buildDir/staging-$branch/"
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        System.setProperty('https.protocols', 'TLSv1.1')
+    }
+    relVersion = project.findProperty('releaseVersion')
+    numVersion = relVersion?.find(/^[\d\.]+/)
+    underVersion = relVersion?.replace('.', '_')?.replace('-', '_')?.toUpperCase()
+    releaseBuild = !relVersion?.toLowerCase()?.contains('snapshot')
+    stableBuild = !relVersion?.toLowerCase()?.contains('beta') && !relVersion?.toLowerCase()?.contains('rc')
+    devWorkspaceRoot = "$project.buildDir/svn-dev-workspace-$branch"
+    devWorkspace = "$devWorkspaceRoot/$relVersion"
+    stagingWebsiteDir = "$project.buildDir/staging-website/"
 }
+
+task assumesBranch {
+    doLast {
+        assert branch, "Required property 'branch' not set"
+    }
+}
+
+task assumesRelVersion(dependsOn: assumesBranch) {
+    doLast {
+        assert relVersion, "Required property 'releaseVersion' not set"
+    }
+}
+
+apply from: 'gradle/phase1.gradle'
+apply from: 'gradle/phase2.gradle'
 
 task phase1 {
     dependsOn 'prepareVoteThread'
