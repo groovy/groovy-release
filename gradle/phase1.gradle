@@ -29,7 +29,6 @@ buildscript {
 }
 
 apply plugin: "at.bxm.svntools"
-apply plugin: 'signing'
 
 svntools {
     username = apacheUser
@@ -72,7 +71,7 @@ task confirmVersion(dependsOn: [assumesRelVersion, checkout]) {
 }
 
 // use Exec rather than GradleBuild to avoid any issues between gradle versions
-task checkCompatibility(type: Exec, dependsOn: [assumesRelVersion, confirmVersion]) {
+task checkCompatibility(type: Exec, dependsOn: [assumesRelVersion]) {
     workingDir stagingDir
     def theArgs = []
     if (Os.isFamily(Os.FAMILY_WINDOWS)) {
@@ -106,7 +105,7 @@ task jiraPrecheck(dependsOn: [assumesRelVersion, checkCompatibility]) {
     }
 }
 
-task createReleaseBranch(dependsOn: [assumesRelVersion, jiraPrecheck]) {
+task createReleaseBranch(dependsOn: [assumesRelVersion, jiraPrecheck, confirmVersion]) {
     group = "Pre-vote phase"
     description = "Creates a release branch"
     doLast {
@@ -139,7 +138,6 @@ task updateVersionProperties(dependsOn: [assumesRelVersion, createReleaseBranch]
 task buildAndUpload(type: Exec, dependsOn: [assumesRelVersion, updateVersionProperties]) {
     group = "Pre-vote phase"
     description = "Builds Apache Groovy and publishes the Maven artifacts to the staging repository on Bintray"
-    dependsOn updateVersionProperties
     workingDir stagingDir
     ext.theArgs = []
     if (Os.isFamily(Os.FAMILY_WINDOWS)) {
@@ -147,8 +145,6 @@ task buildAndUpload(type: Exec, dependsOn: [assumesRelVersion, updateVersionProp
     } else {
         theArgs << 'gradlew'
     }
-    theArgs << "-PbintrayUser=$artifactoryUser"
-    theArgs << "-PbintrayKey=$artifactoryPassword"
     theArgs << "-PbintrayContext=https://groovy.jfrog.io/groovy/"
     theArgs << "-PbintrayRepoKey=${releaseBuild ? 'libs-release-local' : 'libs-snapshot-local'}"
     theArgs += ['install', 'dist', 'artifactoryPublish']
@@ -186,32 +182,34 @@ task addSvnDevFiles(type: SvnAdd, dependsOn: [assumesRelVersion, copySvnDistro, 
     recursive true
 }
 
-task createChecksumsAndSign(dependsOn: [assumesRelVersion, addSvnDevFiles]) {
+task createChecksums(dependsOn: [assumesRelVersion, addSvnDevFiles]) {
     group = "Pre-vote phase"
     description = "Creates SHA-256 checksums for all artifacts"
     doLast {
-        fileTree(devWorkspace).files.each {
-            ant.checksum file: it, algorithm: 'SHA-256'
-            signing.sign(it)
+        fileTree(devWorkspace).files.each { File f ->
+            if (f.name.toLowerCase().endsWith('.zip')) {
+                ant.checksum file: f, algorithm: 'SHA-256', fileext: '.sha256'
+            }
         }
     }
 }
 
-task uploadToApacheDevServers(dependsOn: [assumesRelVersion, createChecksumsAndSign]) {
+task uploadToApacheDevServer(dependsOn: [assumesRelVersion, createChecksums]) {
     group = "Pre-vote phase"
     description = "Commits the changed files to the Apache dist dev server"
     doLast {
         // less declarative than ideal but we want deferred operation since
         // svn plugin assumes list of files to commit is known at config time
-        // TODO: create feature request for svn plugin for depth argument or add source directory with recursive
+        // TODO: create feature request for svn plugin for:
+        // depth argument (infinite) or add source directory with recursive switch
         def uploadBuild = project.tasks.create(name: "uploadBuild", type: GradleBuild)
         uploadBuild.startParameter.projectProperties = gradle.startParameter.projectProperties
-        uploadBuild.tasks = ['uploadToApacheDevServersInternal']
+        uploadBuild.tasks = ['uploadToApacheDevServerInternal']
         uploadBuild.execute()
     }
 }
 
-task uploadToApacheDevServersInternal(type: SvnCommit, dependsOn: assumesRelVersion) {
+task uploadToApacheDevServerInternal(type: SvnCommit) {
     source << devWorkspace
     def tree = fileTree(devWorkspace).include('**/*')
     tree.visit {
@@ -220,7 +218,7 @@ task uploadToApacheDevServersInternal(type: SvnCommit, dependsOn: assumesRelVers
     commitMessage = "New version $branch $relVersion added"
 }
 
-task checkDevWorkspaceVersion(type: SvnVersion, dependsOn: [assumesRelVersion, uploadToApacheDevServersInternal]) {
+task checkDevWorkspaceVersion(type: SvnVersion, dependsOn: [assumesRelVersion, uploadToApacheDevServer]) {
     sourcePath = devWorkspaceRoot
 }
 
@@ -286,12 +284,12 @@ https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=$projectId&vers
 Tag: $repoBase?p=groovy.git;a=tag;h=refs/tags/GROOVY_$underVersion
 Tag commit id: $tagId
 
-The artifacts to be voted on are located as follows.
+The artifacts to be voted on are located as follows (r$svnVersion.minRevisionNumber).
 Source release: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/sources
 Convenience binaries: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/distribution
-SVN version id: 17618: $svnVersion.minRevisionNumber
 
-Release artifacts are signed with the following key: https://dist.apache.org/repos/dist/dev/groovy/KEYS
+Release artifacts are signed with a key from the following file:
+https://dist.apache.org/repos/dist/dev/groovy/KEYS
 
 Please vote on releasing this package as Apache Groovy $relVersion.
 

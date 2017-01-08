@@ -17,8 +17,8 @@ import org.apache.tools.ant.taskdefs.condition.Os
  *     signing.secretKeyRingFile=path_to_secring.gpg
  *     apacheUser=your_username
  *     apachePassword=your_password
- *     artifactoryUser=bintray_username
- *     artifactoryPassword=bintray_secret_password
+ *     bintrayUser=bintray_username
+ *     bintrayPassword=bintray_secret_password
  *
  * Phase 2 is invoked with:
  *
@@ -78,6 +78,7 @@ ext {
     stableBuild = !relVersion?.toLowerCase()?.contains('beta') && !relVersion?.toLowerCase()?.contains('rc')
     devWorkspaceRoot = "$project.buildDir/svn-dev-workspace-$branch"
     devWorkspace = "$devWorkspaceRoot/$relVersion"
+    releaseWorkspaceRoot = "$project.buildDir/svn-release-workspace-$branch"
     stagingWebsiteDir = "$project.buildDir/staging-website/"
 }
 
