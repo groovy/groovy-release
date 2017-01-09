@@ -219,7 +219,11 @@ task uploadToApacheDevServerInternal(type: SvnCommit) {
 }
 
 task checkDevWorkspaceVersion(type: SvnVersion, dependsOn: [assumesRelVersion, uploadToApacheDevServer]) {
-    sourcePath = devWorkspaceRoot
+    sourcePath = devWorkspace
+    doLast {
+        def f = new File(devWorkspace)
+        println "SvnVersion: build/${f.parentFile.name}/${f.name} at r" + svnVersion.maxRevisionNumber
+    }
 }
 
 task createAndPushTag(dependsOn: [assumesRelVersion, checkDevWorkspaceVersion]) {
@@ -284,7 +288,7 @@ https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=$projectId&vers
 Tag: $repoBase?p=groovy.git;a=tag;h=refs/tags/GROOVY_$underVersion
 Tag commit id: $tagId
 
-The artifacts to be voted on are located as follows (r$svnVersion.minRevisionNumber).
+The artifacts to be voted on are located as follows (r$svnVersion.maxRevisionNumber).
 Source release: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/sources
 Convenience binaries: https://dist.apache.org/repos/dist/dev/groovy/$relVersion/distribution
 
