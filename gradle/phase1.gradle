@@ -145,8 +145,8 @@ task buildAndUpload(type: Exec, dependsOn: [assumesRelVersion, updateVersionProp
     } else {
         theArgs << 'gradlew'
     }
-    theArgs << "-PbintrayContext=https://groovy.jfrog.io/groovy/"
-    theArgs << "-PbintrayRepoKey=${releaseBuild ? 'libs-release-local' : 'libs-snapshot-local'}"
+    theArgs << "-PartifactoryContext=https://groovy.jfrog.io/groovy/"
+    theArgs << "-PartifactoryRepoKey=${releaseBuild ? 'libs-release-local' : 'libs-snapshot-local'}"
     theArgs += ['install', 'dist', 'artifactoryPublish']
     commandLine theArgs
 }

@@ -17,8 +17,8 @@ import org.apache.tools.ant.taskdefs.condition.Os
  *     signing.secretKeyRingFile=path_to_secring.gpg
  *     apacheUser=your_username
  *     apachePassword=your_password
- *     bintrayUser=bintray_username
- *     bintrayPassword=bintray_secret_password
+ *     artifactoryUser=artifactory_username
+ *     artifactoryPassword=artifactory_secret_password
  *
  * Phase 2 is invoked with:
  *
@@ -37,8 +37,8 @@ import org.apache.tools.ant.taskdefs.condition.Os
  *     githubPassword=your_github_password
  *     gvm.consumerKey=xxxxx
  *     gvm.consumerToken=yyyyy
- *     bintrayUser=aaaa
- *     bintrayPassword=bbbb
+ *     artifactoryUser=aaaa
+ *     artifactoryPassword=bbbb
  *     centralUser=cccc
  *     centralKey=dddd
  */

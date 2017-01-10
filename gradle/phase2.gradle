@@ -6,7 +6,7 @@ import at.bxm.gradleplugins.svntools.tasks.SvnDelete
 import groovyx.net.http.RESTClient
 import org.ajoberstar.grgit.Credentials
 
-//import static groovyx.net.http.ContentType.JSON
+import static groovyx.net.http.ContentType.JSON
 
 buildscript {
     repositories {
@@ -87,20 +87,24 @@ task promoteOnBintray {
     description = "Releases the version on Bintray"
     dependsOn jiraCheckPhase2
     doLast {
-        println 'TODO promoteOnBintray'
+        def buildNum = '1483862555468'
+        def body = /{
+            "dryRun" : false,
+            "publish" : false,
+            "async" : false,
+            "targetRepo" : "distribution-repo",
+            "sourceRepos" : ["libs-release-local"]
+        }/
+        def artifactory = new groovyx.net.http.RESTClient('https://groovy.jfrog.io/groovy/')
+        artifactory.headers['Authorization'] = 'Basic ' + "$artifactoryUser:$artifactoryPassword".getBytes('iso-8859-1').encodeBase64()
+        def resp = artifactory.post(
+                path: "api/build/distribute/groovy/$buildNum",
+                body: body,
+                requestContentType: JSON
+        )
+        assert resp.status == 200
+        println resp.data
     }
-//    doLast {
-//        def sdkman = new groovyx.net.http.RESTClient('https://vendors.sdkman.io/')
-//        sdkman.headers['consumer_key'] = consumerKey
-//        sdkman.headers['consumer_token'] = consumerToken
-//        def resp = jira.put(
-//                path: '/announce/struct',
-//                body: /{ "candidate": "groovy", "version": "$versionId", "hashtag" : "#groovylang" }/,
-//                requestContentType: JSON
-//        )
-//        assert resp.status == 200
-//        println resp.message
-//    }
 }
 
 task synchronizeWithMavenCentral {
@@ -112,59 +116,59 @@ task synchronizeWithMavenCentral {
     }
 }
 
-task cleanSvnDistWorkspace(type: Delete) {
+task cleanSvnReleaseWorkspace(type: Delete) {
     dependsOn synchronizeWithMavenCentral
-    project.ext.distWorkspaceRoot = "$project.buildDir/svn-dist-workspace-$branch"
-    delete distWorkspaceRoot
+    project.ext.releaseWorkspaceRoot = "$project.buildDir/svn-release-workspace-$branch"
+    delete releaseWorkspaceRoot
 }
 
-task prepareSvnDistWorkspace(type: SvnCheckout, dependsOn: cleanSvnDistWorkspace) {
+task prepareSvnReleaseWorkspace(type: SvnCheckout, dependsOn: cleanSvnReleaseWorkspace) {
     svnUrl = "https://dist.apache.org/repos/dist/release/groovy"
-    workspaceDir = distWorkspaceRoot
-    rootProject.ext.distWorkspace = "$distWorkspaceRoot/$relVersion"
+    workspaceDir = releaseWorkspaceRoot
+    rootProject.ext.releaseWorkspace = "$releaseWorkspaceRoot/$relVersion"
     depth = SvnDepth.FILES // slightly more efficient if we have two concurrent releases (e.g. 2.4.latest, 2.5.0)
 }
 
-task copyReleaseArtifacts(type: Copy, dependsOn: prepareSvnDistWorkspace) {
-    description = "Copies all files from DEV to DIST"
+task copyReleaseArtifacts(type: Copy, dependsOn: prepareSvnReleaseWorkspace) {
+    description = "Copies all files from DEV to RELEASE"
     from(devWorkspace)
-    into distWorkspace
+    into releaseWorkspace
 }
 
-task addSvnDistFiles(type: SvnAdd, dependsOn: copyReleaseArtifacts) {
+task addSvnReleaseFiles(type: SvnAdd, dependsOn: copyReleaseArtifacts) {
     // TODO check whether this is needed since commit seems to do an add anyway?
     description = "Adds the changed files to dist svn"
-    add distWorkspace
+    add releaseWorkspace
     recursive true
 }
 
-task deleteSvnDevFiles(type: SvnDelete, dependsOn: addSvnDistFiles) {
+task deleteSvnDevFiles(type: SvnDelete, dependsOn: addSvnReleaseFiles) {
     description = "Deletes the changed files to svn"
     delete devWorkspace
 }
 
-task uploadToApacheDistServers {
+task uploadToApacheReleaseServer {
     // svntools has no move so add and delete explicitly
     dependsOn deleteSvnDevFiles
     group = "Post-passed phase"
-    description = "Moves the artifacts from the DEV subversion server to the DIST subversion server"
+    description = "Moves the artifacts from the DEV subversion repo to the RELEASE subversion repo"
     doLast {
         // less declarative than ideal but we want deferred operation since
         // svn plugin assumes list of files to commit is known at config time
         def uploadBuild = project.tasks.create(name: "uploadBuild", type: GradleBuild)
         uploadBuild.startParameter.projectProperties = gradle.startParameter.projectProperties
-        uploadBuild.tasks = ['uploadToApacheDistServersInternal']
+        uploadBuild.tasks = ['uploadToApacheReleaseServerInternal']
         uploadBuild.execute()
     }
 }
 
-task uploadToApacheDistServersInternal(type: SvnCommit) {
+task uploadToApacheReleaseServerInternal(type: SvnCommit) {
     source << devWorkspace
-    source << distWorkspace
-    def tree = fileTree(distWorkspace).include('**/*')
+    source << releaseWorkspace
+    def tree = fileTree(releaseWorkspace).include('**/*')
     tree.visit {
-//        println "$distWorkspace/$it.path"
-        source << "$distWorkspace/$it.path"
+//        println "$releaseWorkspace/$it.path"
+        source << "$releaseWorkspace/$it.path"
     }
     commitMessage = "New version $branch $relVersion added"
 }
@@ -172,7 +176,7 @@ task uploadToApacheDistServersInternal(type: SvnCommit) {
 task uploadDocumentationToGroovyWebsite {
     group = "Post-passed phase"
     description = "Uploads the documentation to the Groovy website server"
-    dependsOn uploadToApacheDistServers
+    dependsOn uploadToApacheReleaseServer
     doLast {
         ssh.run {
             session(remotes.ciServer) {
