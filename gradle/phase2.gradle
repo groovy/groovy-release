@@ -3,6 +3,7 @@ import at.bxm.gradleplugins.svntools.tasks.SvnAdd
 import at.bxm.gradleplugins.svntools.tasks.SvnCheckout
 import at.bxm.gradleplugins.svntools.tasks.SvnCommit
 import at.bxm.gradleplugins.svntools.tasks.SvnDelete
+import groovy.json.JsonSlurper
 import groovyx.net.http.RESTClient
 import org.ajoberstar.grgit.Credentials
 
@@ -36,6 +37,7 @@ svntools {
 
 ssh.settings {
     dryRun = project.hasProperty('dryRun')
+    // TODO explore whether this can be made more secure - below not working on windows
 //    knownHosts = file(System.getProperty('user.home') + '/.ssh/known_hosts')
     knownHosts = allowAnyHosts
 }
@@ -52,7 +54,7 @@ remotes {
 sdkman {
     api = "https://vendors.sdkman.io/"
     consumerKey = findProperty('gvm.consumerKey')
-    consumerToken = 'dummy'//findProperty('gvm.consumerPassword')
+    consumerToken = findProperty('gvm.consumerPassword')
     candidate = "groovy"
     version = "$relVersion"
     url = "http://groovy-lang.org/download.html"
@@ -82,50 +84,51 @@ task jiraCheckPhase2 {
     }
 }
 
-task promoteOnBintray {
+task promoteOnBintray(dependsOn: jiraCheckPhase2) {
     group = "Post-passed phase"
     description = "Releases the version on Bintray"
-    dependsOn jiraCheckPhase2
     doLast {
-        def buildNum = '1483862555468'
+        def artifactory = new RESTClient('https://groovy.jfrog.io/groovy/')
+        artifactory.headers['Authorization'] = 'Basic ' + "$artifactoryUser:$artifactoryPassword".getBytes('iso-8859-1').encodeBase64()
+        def resp = artifactory.get(path: 'api/build/groovy')
+        assert resp.status == 200
+        def builds = new JsonSlurper().parse(resp.data.bytes).buildsNumbers
+        // TODO this gets the latest build but it won't be that if we are releasing
+        // multiple branches at the same time, e.g. 2.4.9 and 2.5.0-beta-1
+        def buildNum = builds.sort{ it.started }[-1].uri[1..-1]
         def body = /{
-            "dryRun" : false,
-            "publish" : false,
+            "dryRun" : ${project.hasProperty('dryRun').toString()},
+            "publish" : true,
             "async" : false,
             "targetRepo" : "distribution-repo",
             "sourceRepos" : ["libs-release-local"]
         }/
-        def artifactory = new groovyx.net.http.RESTClient('https://groovy.jfrog.io/groovy/')
-        artifactory.headers['Authorization'] = 'Basic ' + "$artifactoryUser:$artifactoryPassword".getBytes('iso-8859-1').encodeBase64()
-        def resp = artifactory.post(
+        resp = artifactory.post(
                 path: "api/build/distribute/groovy/$buildNum",
                 body: body,
                 requestContentType: JSON
         )
         assert resp.status == 200
-        println resp.data
+        if (project.hasProperty('dryRun')) println resp.data
+        else println resp.data.message
     }
 }
 
-task synchronizeWithMavenCentral {
+task synchronizeWithMavenCentral(dependsOn: promoteOnBintray) {
     group = "Post-passed phase"
     description = "Releases the version on Bintray"
-    dependsOn promoteOnBintray
     doLast {
         println 'TODO synchronizeWithMavenCentral'
     }
 }
 
-task cleanSvnReleaseWorkspace(type: Delete) {
-    dependsOn synchronizeWithMavenCentral
-    project.ext.releaseWorkspaceRoot = "$project.buildDir/svn-release-workspace-$branch"
+task cleanSvnReleaseWorkspace(type: Delete, dependsOn: [assumesRelVersion, synchronizeWithMavenCentral]) {
     delete releaseWorkspaceRoot
 }
 
 task prepareSvnReleaseWorkspace(type: SvnCheckout, dependsOn: cleanSvnReleaseWorkspace) {
     svnUrl = "https://dist.apache.org/repos/dist/release/groovy"
     workspaceDir = releaseWorkspaceRoot
-    rootProject.ext.releaseWorkspace = "$releaseWorkspaceRoot/$relVersion"
     depth = SvnDepth.FILES // slightly more efficient if we have two concurrent releases (e.g. 2.4.latest, 2.5.0)
 }
 
@@ -147,36 +150,43 @@ task deleteSvnDevFiles(type: SvnDelete, dependsOn: addSvnReleaseFiles) {
     delete devWorkspace
 }
 
-task uploadToApacheReleaseServer {
+task uploadToApacheReleaseServer(dependsOn: deleteSvnDevFiles) {
     // svntools has no move so add and delete explicitly
-    dependsOn deleteSvnDevFiles
     group = "Post-passed phase"
-    description = "Moves the artifacts from the DEV subversion repo to the RELEASE subversion repo"
+    description = "Moves the artifacts from the DEV svn repo to the RELEASE svn repo"
     doLast {
         // less declarative than ideal but we want deferred operation since
         // svn plugin assumes list of files to commit is known at config time
-        def uploadBuild = project.tasks.create(name: "uploadBuild", type: GradleBuild)
-        uploadBuild.startParameter.projectProperties = gradle.startParameter.projectProperties
-        uploadBuild.tasks = ['uploadToApacheReleaseServerInternal']
-        uploadBuild.execute()
+        def commitInternal = project.tasks.create(name: "commitAdd", type: GradleBuild)
+        commitInternal.startParameter.projectProperties = gradle.startParameter.projectProperties
+        commitInternal.tasks = ['commitAddToReleaseInternal']
+        commitInternal.execute()
+        commitInternal = project.tasks.create(name: "commitDelete", type: GradleBuild)
+        commitInternal.startParameter.projectProperties = gradle.startParameter.projectProperties
+        commitInternal.tasks = ['commitDeleteFromDevInternal']
+        commitInternal.execute()
     }
 }
 
-task uploadToApacheReleaseServerInternal(type: SvnCommit) {
-    source << devWorkspace
+task commitDeleteFromDevInternal(type: SvnCommit) {
+    // NOTE: this still requires some manual cleanup due to:
+    // https://github.com/martoe/gradle-svntools-plugin/issues/36
+    source << file(devWorkspaceRoot)
+    commitMessage = "Deleting version $relVersion from the DEV staging area"
+}
+
+task commitAddToReleaseInternal(type: SvnCommit) {
     source << releaseWorkspace
     def tree = fileTree(releaseWorkspace).include('**/*')
     tree.visit {
-//        println "$releaseWorkspace/$it.path"
         source << "$releaseWorkspace/$it.path"
     }
-    commitMessage = "New version $branch $relVersion added"
+    commitMessage = "Releasing version $relVersion"
 }
 
-task uploadDocumentationToGroovyWebsite {
+task uploadDocumentationToGroovyWebsite(dependsOn: uploadToApacheReleaseServer) {
     group = "Post-passed phase"
     description = "Uploads the documentation to the Groovy website server"
-    dependsOn uploadToApacheReleaseServer
     doLast {
         ssh.run {
             session(remotes.ciServer) {
@@ -190,10 +200,9 @@ task uploadDocumentationToGroovyWebsite {
     }
 }
 
-task maybeUpdateDocumentationSymlink {
+task maybeUpdateDocumentationSymlink(dependsOn: uploadDocumentationToGroovyWebsite) {
     group = "Post-passed phase"
     description = "Changes the symlink to the latest documentation if and only if it's a stable release"
-    dependsOn uploadDocumentationToGroovyWebsite
     doLast {
         ssh.run {
             session(remotes.ciServer) {
@@ -204,25 +213,20 @@ task maybeUpdateDocumentationSymlink {
     }
 }
 
-task publishToSDKman {
+task publishToSDKman(dependsOn: [maybeUpdateDocumentationSymlink, sdkReleaseVersion]) {
     group = "Post-passed phase"
     description = "Publishes the release on SDKman"
-    dependsOn maybeUpdateDocumentationSymlink
-    dependsOn sdkReleaseVersion
 }
 
-task makeDefaultOnSDKman {
+task makeDefaultOnSDKman(dependsOn: [publishToSDKman, sdkDefaultVersion]) {
     group = "Post-passed phase"
     description = "Make it the default version on SDKman"
-    dependsOn publishToSDKman
-    dependsOn sdkDefaultVersion
 }
 makeDefaultOnSDKman.onlyIf{ project.findProperty('makeDefault') }
 
-task checkoutGroovyWebsite {
+task checkoutGroovyWebsite(dependsOn: publishToSDKman) {
     group = "Post-passed phase"
     description = "Checks out the Groovy website repository"
-    dependsOn publishToSDKman
     doLast {
         if (!project.hasProperty('skipClone')) {
             println "Cloning $websiteRepo to $stagingWebsiteDir. This may take a few minutes ..."
@@ -231,10 +235,9 @@ task checkoutGroovyWebsite {
     }
 }
 
-task updateGroovySitemap {
+task updateGroovySitemap(dependsOn: checkoutGroovyWebsite) {
     group = "Post-passed phase"
     description = "Updates sitemap.groovy to include the newly released version and commits the result"
-    dependsOn checkoutGroovyWebsite
     doLast {
         def sitemapFile = file("$stagingWebsiteDir/site/src/site/sitemap.groovy")
         def sitemapText = propsFile.text
@@ -244,10 +247,9 @@ task updateGroovySitemap {
     }
 }
 
-task pushGroovyWebsite {
+task pushGroovyWebsite(dependsOn: updateGroovySitemap) {
     group = "Post-passed phase"
     description = "Pushes the Groovy website so that the new website is published"
-    dependsOn updateGroovySitemap
     doLast {
         def githubCredentials = new Credentials(username: githubUser, password: githubPassword)
         def grgit = grgitClass.open(dir: stagingWebsiteDir, creds: githubCredentials)
