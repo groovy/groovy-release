@@ -44,6 +44,11 @@ import org.apache.tools.ant.taskdefs.condition.Os
  *
  * Using the -PsecurityFix property will add some additional placeholder text
  * about a security fix to the email template.
+ *
+ * Assumptions:
+ * <ul>
+ * <li>The KEYS file is currently assumed to be updated manually outside this build script</li>
+ * </ul>
  */
 
 buildscript {
@@ -82,6 +87,7 @@ ext {
     devWorkspaceRoot = "$project.buildDir/svn-dev-workspace-$branch"
     devWorkspace = "$devWorkspaceRoot/$relVersion"
     releaseWorkspaceRoot = "$project.buildDir/svn-release-workspace-$branch"
+    releaseWorkspace = "$releaseWorkspaceRoot/$relVersion"
     stagingWebsiteDir = "$project.buildDir/staging-website/"
 }
 
