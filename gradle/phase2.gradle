@@ -116,9 +116,22 @@ task promoteOnBintray(dependsOn: jiraCheckPhase2) {
 
 task synchronizeWithMavenCentral(dependsOn: promoteOnBintray) {
     group = "Post-passed phase"
-    description = "Releases the version on Bintray"
+    description = "Syncs with Maven Central/Sonatype"
     doLast {
-        println 'TODO synchronizeWithMavenCentral'
+        def bintray = new RESTClient('https://api.bintray.com/maven_central_sync/groovy/maven/')
+        bintray.headers['Authorization'] = 'Basic ' + "$bintrayUser:$bintrayPassword".getBytes('iso-8859-1').encodeBase64()
+        def body = /{
+            "username" : "${project.findProperty('centralUser')""},
+            "password" : "${project.findProperty('centralKey')}"
+        }/
+        def resp = bintray.post(
+                path: "groovy/versions/$relVersion",
+                body: body,
+                requestContentType: JSON
+        )
+        assert resp.status == 200
+        println resp.data.status
+        println resp.data.messages.join('\n')
     }
 }
 
@@ -192,6 +205,7 @@ task uploadDocumentationToGroovyWebsite(dependsOn: uploadToApacheReleaseServer) 
             session(remotes.ciServer) {
                 execute 'uname -a'
                 put from: "$stagingDir/target/distributions/apache-groovy-docs-${relVersion}.zip", into: '/var/www/docs/docs'
+                execute "rm -rf /var/www/docs/docs/groovy-${relVersion}/"
                 execute "unzip -d /var/www/docs/docs/ /var/www/docs/docs/apache-groovy-docs-${relVersion}.zip"
                 execute "chgrp -R teamcity /var/www/docs/docs/groovy-${relVersion}/"
                 execute "rm /var/www/docs/docs/apache-groovy-docs-${relVersion}.zip"
