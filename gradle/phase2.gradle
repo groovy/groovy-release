@@ -270,7 +270,7 @@ task proposeAnnouncementEmail(dependsOn: waitForWebsitePublication) {
     group = "Post-passed phase"
     description = "Generates an [ANN] thread to be tweaked and sent to the dev@, user@ and announce@ mailing lists"
     doLast {
-        def includeSec = project.findProperty('includeSecurity')
+        def securityFix = project.hasProperty('securityFix')
         def newRelease = numVersion.endsWith('.0')
         println """"
 Below is a template email to tweak and send to the dev@, user@ and announce@ mailing lists as an [ANNOUNCE] thread.
@@ -287,10 +287,10 @@ ${ stableBuild ? (newRelease ? '''We are proud to announce this new version of G
 Your feedback on any unintentional glitches is welcome.''': '''This release is a maintenance release of the $branch branch.
 It is strongly encouraged that all users using prior
 versions on this branch upgrade to this version.''') : '''This is a pre-release
-of a new version of Groovy. We greatly appreciate any feedback you can give us when using this version..
+of a new version of Groovy. We greatly appreciate any feedback you can give us when using this version.
 ''' }
 
-${includeSec ? '''
+${securityFix ? '''
 This release contains critical security fixes.
 Details can be found on http://groovy-lang.org/security.htm
 ''' : '' }

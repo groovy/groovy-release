@@ -41,6 +41,9 @@ import org.apache.tools.ant.taskdefs.condition.Os
  *     artifactoryPassword=bbbb
  *     centralUser=cccc
  *     centralKey=dddd
+ *
+ * Using the -PsecurityFix property will add some additional placeholder text
+ * about a security fix to the email template.
  */
 
 buildscript {
