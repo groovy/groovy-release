@@ -121,7 +121,7 @@ task synchronizeWithMavenCentral(dependsOn: promoteOnBintray) {
         def bintray = new RESTClient('https://api.bintray.com/maven_central_sync/groovy/maven/')
         bintray.headers['Authorization'] = 'Basic ' + "$bintrayUser:$bintrayPassword".getBytes('iso-8859-1').encodeBase64()
         def body = /{
-            "username" : "${project.findProperty('centralUser')""},
+            "username" : "${project.findProperty('centralUser')}",
             "password" : "${project.findProperty('centralKey')}"
         }/
         def resp = bintray.post(
