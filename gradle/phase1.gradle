@@ -200,8 +200,8 @@ task uploadToApacheDevServer(dependsOn: [assumesRelVersion, createChecksums]) {
     doLast {
         // less declarative than ideal but we want deferred operation since
         // svn plugin assumes list of files to commit is known at config time
-        // TODO: create feature request for svn plugin for:
-        // depth argument (infinite) or add source directory with recursive switch
+        // NOTE: feature request for svn plugin here may allow future simplification:
+        // https://github.com/martoe/gradle-svntools-plugin/issues/37
         def uploadBuild = project.tasks.create(name: "uploadBuild", type: GradleBuild)
         uploadBuild.startParameter.projectProperties = gradle.startParameter.projectProperties
         uploadBuild.tasks = ['uploadToApacheDevServerInternal']

@@ -45,6 +45,10 @@ import org.apache.tools.ant.taskdefs.condition.Os
  * Using the -PsecurityFix property will add some additional placeholder text
  * about a security fix to the email template.
  *
+ * The script will try to be smart about making the new release the latest release version.
+ * It does this if the new release is a stable release and it looks like no other stable releases have
+ * a higher major.minor version. Use -PforceDefault and -PskipDefault to override.
+ *
  * Assumptions:
  * <ul>
  * <li>The KEYS file is currently assumed to be updated manually outside this build script</li>
@@ -81,6 +85,7 @@ ext {
     }
     relVersion = project.findProperty('releaseVersion')
     numVersion = relVersion?.find(/^[\d\.]+/)
+    newRelease = numVersion.endsWith('.0')
     underVersion = relVersion?.replace('.', '_')?.replace('-', '_')?.toUpperCase()
     releaseBuild = !relVersion?.toLowerCase()?.contains('snapshot')
     stableBuild = !relVersion?.toLowerCase()?.contains('beta') && !relVersion?.toLowerCase()?.contains('rc')

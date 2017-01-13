@@ -214,31 +214,7 @@ task uploadDocumentationToGroovyWebsite(dependsOn: uploadToApacheReleaseServer) 
     }
 }
 
-task maybeUpdateDocumentationSymlink(dependsOn: uploadDocumentationToGroovyWebsite) {
-    group = "Post-passed phase"
-    description = "Changes the symlink to the latest documentation if and only if it's a stable release"
-    doLast {
-        ssh.run {
-            session(remotes.ciServer) {
-                execute 'uname -a'
-                execute "ln -s /var/www/docs/docs/latest groovy-$relVersion"
-            }
-        }
-    }
-}
-
-task publishToSDKman(dependsOn: [maybeUpdateDocumentationSymlink, sdkReleaseVersion]) {
-    group = "Post-passed phase"
-    description = "Publishes the release on SDKman"
-}
-
-task makeDefaultOnSDKman(dependsOn: [publishToSDKman, sdkDefaultVersion]) {
-    group = "Post-passed phase"
-    description = "Make it the default version on SDKman"
-}
-makeDefaultOnSDKman.onlyIf{ project.findProperty('makeDefault') }
-
-task checkoutGroovyWebsite(dependsOn: publishToSDKman) {
+task checkoutGroovyWebsite(dependsOn: uploadDocumentationToGroovyWebsite) {
     group = "Post-passed phase"
     description = "Checks out the Groovy website repository"
     doLast {
@@ -249,17 +225,48 @@ task checkoutGroovyWebsite(dependsOn: publishToSDKman) {
     }
 }
 
-task updateGroovySitemap(dependsOn: checkoutGroovyWebsite) {
+task findGroovyVersions(dependsOn: checkoutGroovyWebsite) {
+    def sitemapFile = file("$stagingWebsiteDir/site/src/site/sitemap.groovy")
+    def matcher = sitemapFile.text =~ /(?ism).*groovyDocumentationVersions\(([^)]*)\).*/
+    assert matcher[0]
+    rootProject.ext.versionsText = matcher[0][1]
+    def majorMinor = { String s -> s.split(/\./).with{ it[0].toInteger() * 100 + it[1].toInteger() } }
+    def versions = Eval.me(versionsText)
+    def relMajorMinor = majorMinor(relVersion)
+    rootProject.ext.foundNewer = versions.collect{ majorMinor(it) }.any{ it > relMajorMinor }
+    rootProject.ext.newDefault = project.hasProperty('forceDefault') ||
+            (!project.hasProperty('skipDefault') && stableBuild && !foundNewer)
+}
+
+task maybeUpdateDocumentationSymlink(dependsOn: findGroovyVersions) {
+    group = "Post-passed phase"
+    description = "Changes the symlink to the latest documentation if and only if it's a stable release"
+    doLast {
+        // TODO work out unix group permissions - currently might require manual chown/chgrp fix ups
+        ssh.run {
+            session(remotes.ciServer) {
+                execute 'uname -a'
+                execute "ln -s /var/www/docs/docs/groovy-$relVersion latest"
+            }
+        }
+    }
+}
+maybeUpdateDocumentationSymlink.onlyIf{ newDefault }
+
+task updateGroovySitemap(dependsOn: findGroovyVersions) {
     group = "Post-passed phase"
     description = "Updates sitemap.groovy to include the newly released version and commits the result"
     doLast {
         def sitemapFile = file("$stagingWebsiteDir/site/src/site/sitemap.groovy")
-        def sitemapText = propsFile.text
-        sitemapText = sitemapText.replace(numVersion + '-SNAPSHOT', relVersion)
-        sitemapText = sitemapText.replace(numVersion + '.SNAPSHOT', relVersion)
-        sitemapFile.text = propsText
+        def sitemapText = sitemapFile.text
+        def baseVersion = relVersion.split(/\./).with{ "${it[0]}.${it[1]}.0"  }
+        def newText = newRelease ? versionsText.replaceFirst(/(?sm)'\s*\]/, "',\n            '$relVersion'\n    \\]")
+                : versionsText.replaceFirst(/(?sm)(.*)('$baseVersion'[',. 0-9]*)/, "\$1\$2, '$relVersion'")
+        sitemapText = sitemapText.replace(versionsText, newText)
+        sitemapFile.text = sitemapText
     }
 }
+updateGroovySitemap.onlyIf{ stableBuild }
 
 task pushGroovyWebsite(dependsOn: updateGroovySitemap) {
     group = "Post-passed phase"
@@ -272,22 +279,44 @@ task pushGroovyWebsite(dependsOn: updateGroovySitemap) {
         println "@ $commit.abbreviatedId ($commit.shortMessage)"
     }
 }
+updateGroovySitemap.onlyIf{ stableBuild }
 
 task waitForWebsitePublication(dependsOn: pushGroovyWebsite) {
     group = "Post-passed phase"
     description = "Polls the Groovy website to check if it is released"
-    // check if http://groovy-lang.org/changelogs/changelog-v.x.y.html is created
     doLast {
-        println 'TODO waitForWebsitePublication'
+        def found = false
+        def delay = 30000 // 1/2 a minute
+        def numTries = 60 // wait for up to 30 mins
+        while (!found && numTries-- > 0) {
+            def groovysite = new RESTClient('http://groovy-lang.org/')
+            def resp = groovysite.get(path: "changelogs/changelog-${relVersion}.html")
+            if (resp.status == 200 && !resp.data.text().contains('Oops!')) {
+                found = true
+            } else {
+                sleep delay
+            }
+        }
+        assert found, 'Timed out waiting for website to be published - please check manually'
     }
 }
 
-task proposeAnnouncementEmail(dependsOn: waitForWebsitePublication) {
+task publishToSDKman(dependsOn: [waitForWebsitePublication, maybeUpdateDocumentationSymlink, sdkReleaseVersion]) {
+    group = "Post-passed phase"
+    description = "Publishes the release on SDKman"
+}
+
+task makeDefaultOnSDKman(dependsOn: [publishToSDKman, sdkDefaultVersion]) {
+    group = "Post-passed phase"
+    description = "Make it the default version on SDKman"
+}
+makeDefaultOnSDKman.onlyIf{ newDefault }
+
+task proposeAnnouncementEmail(dependsOn: makeDefaultOnSDKman) {
     group = "Post-passed phase"
     description = "Generates an [ANN] thread to be tweaked and sent to the dev@, user@ and announce@ mailing lists"
     doLast {
         def securityFix = project.hasProperty('securityFix')
-        def newRelease = numVersion.endsWith('.0')
         println """"
 Below is a template email to tweak and send to the dev@, user@ and announce@ mailing lists as an [ANNOUNCE] thread.
 
@@ -299,12 +328,15 @@ We are pleased to announce version $versionId of Apache Groovy.
 Apache Groovy is a multi-facet programming language for the JVM.
 Further details can be found at the http://groovy.apache.org website.
 
-${ stableBuild ? (newRelease ? '''We are proud to announce this new version of Groovy.
-Your feedback on any unintentional glitches is welcome.''': '''This release is a maintenance release of the $branch branch.
+${ stableBuild ?
+        (newRelease ? '''We are sure you'll enjoy the features in this new version of Groovy.
+Your feedback on any unintentional glitches is welcome.''' :
+        '''This release is a maintenance release of the $branch branch.
 It is strongly encouraged that all users using prior
-versions on this branch upgrade to this version.''') : '''This is a pre-release
-of a new version of Groovy. We greatly appreciate any feedback you can give us when using this version.
-''' }
+versions on this branch upgrade to this version.''') :
+        '''This is a pre-release of a new version of Groovy.
+We greatly appreciate any feedback you can give us when using this version.'''
+}
 
 ${securityFix ? '''
 This release contains critical security fixes.
@@ -315,7 +347,7 @@ https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=$projectId&vers
 
 Sources can be downloaded from: http://www.groovy-lang.org/download.html
 Convenience binaries, SDK and documentation can be found at: http://www.groovy-lang.org/download.html
-
+Jars are also available within the major binary repositories.
 We would like to thank all people who contributed to this release.
 
 We welcome your help and feedback. For more information on how to
