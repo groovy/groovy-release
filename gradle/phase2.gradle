@@ -7,7 +7,7 @@ import groovy.json.JsonSlurper
 import groovyx.net.http.RESTClient
 import org.ajoberstar.grgit.Credentials
 
-import static groovyx.net.http.ContentType.JSON
+import static groovyx.net.http.ContentType.*
 
 buildscript {
     repositories {
@@ -135,6 +135,28 @@ task synchronizeWithMavenCentral(dependsOn: promoteOnBintray) {
     }
 }
 
+// TODO decide if this should go via staging on artifactory
+task publishZipsOnBintray(dependsOn: [jiraCheckPhase2, assumesRelVersion]) {
+    group = "Post-passed phase"
+    description = "Publish distribution zips to bintray"
+    doLast {
+        def bintray = new RESTClient('https://api.bintray.com/content/groovy/maven/')
+        bintray.headers['Authorization'] = 'Basic ' + "$bintrayUser:$bintrayPassword".getBytes('iso-8859-1').encodeBase64()
+        fileTree("$stagingDir/target/distributions").files.each { File f ->
+            println "Uploading $f.name"
+            def resp = bintray.put(
+                    path: "groovy/$version/${f.name}",
+                    body: f.bytes,
+                    requestContentType: BINARY
+            )
+            assert resp.status == 201
+        }
+        println "Zips uploaded! Please release manually."
+        // TODO automate release
+    }
+}
+
+
 task cleanSvnReleaseWorkspace(type: Delete, dependsOn: [assumesRelVersion, synchronizeWithMavenCentral]) {
     delete releaseWorkspaceRoot
 }
@@ -226,16 +248,18 @@ task checkoutGroovyWebsite(dependsOn: uploadDocumentationToGroovyWebsite) {
 }
 
 task findGroovyVersions(dependsOn: checkoutGroovyWebsite) {
-    def sitemapFile = file("$stagingWebsiteDir/site/src/site/sitemap.groovy")
-    def matcher = sitemapFile.text =~ /(?ism).*groovyDocumentationVersions\(([^)]*)\).*/
-    assert matcher[0]
-    rootProject.ext.versionsText = matcher[0][1]
-    def majorMinor = { String s -> s.split(/\./).with{ it[0].toInteger() * 100 + it[1].toInteger() } }
-    def versions = Eval.me(versionsText)
-    def relMajorMinor = majorMinor(relVersion)
-    rootProject.ext.foundNewer = versions.collect{ majorMinor(it) }.any{ it > relMajorMinor }
-    rootProject.ext.newDefault = project.hasProperty('forceDefault') ||
-            (!project.hasProperty('skipDefault') && stableBuild && !foundNewer)
+    doLast {
+        def sitemapFile = file("$stagingWebsiteDir/site/src/site/sitemap.groovy")
+        def matcher = sitemapFile.text =~ /(?ism).*groovyDocumentationVersions\(([^)]*)\).*/
+        assert matcher[0]
+        rootProject.ext.versionsText = matcher[0][1]
+        def majorMinor = { String s -> s.split(/\./).with{ it[0].toInteger() * 100 + it[1].toInteger() } }
+        def versions = Eval.me(versionsText)
+        def relMajorMinor = majorMinor(relVersion)
+        rootProject.ext.foundNewer = versions.collect{ majorMinor(it) }.any{ it > relMajorMinor }
+        rootProject.ext.newDefault = project.hasProperty('forceDefault') ||
+                (!project.hasProperty('skipDefault') && stableBuild && !foundNewer)
+    }
 }
 
 task maybeUpdateDocumentationSymlink(dependsOn: findGroovyVersions) {
@@ -259,10 +283,10 @@ task updateGroovySitemap(dependsOn: findGroovyVersions) {
     doLast {
         def sitemapFile = file("$stagingWebsiteDir/site/src/site/sitemap.groovy")
         def sitemapText = sitemapFile.text
-        def baseVersion = relVersion.split(/\./).with{ "${it[0]}.${it[1]}.0"  }
         def newText = newRelease ? versionsText.replaceFirst(/(?sm)'\s*\]/, "',\n            '$relVersion'\n    \\]")
                 : versionsText.replaceFirst(/(?sm)(.*)('$baseVersion'[',. 0-9]*)/, "\$1\$2, '$relVersion'")
         sitemapText = sitemapText.replace(versionsText, newText)
+        // TODO add download distributions section ...
         sitemapFile.text = sitemapText
     }
 }
@@ -310,9 +334,36 @@ task makeDefaultOnSDKman(dependsOn: [publishToSDKman, sdkDefaultVersion]) {
     group = "Post-passed phase"
     description = "Make it the default version on SDKman"
 }
-makeDefaultOnSDKman.onlyIf{ newDefault }
+makeDefaultOnSDKman.onlyIf{ rootProject.ext.newDefault }
 
-task proposeAnnouncementEmail(dependsOn: makeDefaultOnSDKman) {
+task createNextVersionInJira(dependsOn: [makeDefaultOnSDKman, jiraCheckPhase2]) {
+    group = "Post-passed phase"
+    description = "Make sure that Jira is ready for the next version on this branch"
+    doLast {
+        def jira = new RESTClient('https://issues.apache.org/jira/rest/api/2/')
+        def resp = jira.get(path: 'project/GROOVY/versions')
+        assert resp.status == 200
+        def versionFields = resp.data.find { it.name == nextVersion }
+        if (versionFields) {
+            println "Version $nextVersion already found in Jira!"
+        } else {
+            jira.headers['Authorization'] = 'Basic ' + "$apacheUser:$apachePassword".getBytes('iso-8859-1').encodeBase64()
+            def body = /{ "name": "$nextVersion", "project": "GROOVY", "projectId": $projectId }/
+            resp = jira.post(path: "version", body: body, requestContentType: JSON)
+            assert resp.status == 201
+        }
+    }
+}
+
+task bumpVersionInGit(dependsOn: createNextVersionInJira) {
+    group = "Post-passed phase"
+    description = "The version in the gradle.properties file in the repo should be bumped"
+    doLast {
+        println "TODO bumpVersionInGit"
+    }
+}
+
+task proposeAnnouncementEmail(dependsOn: [bumpVersionInGit, jiraCheckPhase2]) {
     group = "Post-passed phase"
     description = "Generates an [ANN] thread to be tweaked and sent to the dev@, user@ and announce@ mailing lists"
     doLast {
@@ -324,20 +375,20 @@ Below is a template email to tweak and send to the dev@, user@ and announce@ mai
 
 Dear community,
 
-We are pleased to announce version $versionId of Apache Groovy.
+The Apache Groovy team is pleased to announce version $relVersion of Apache Groovy.
 Apache Groovy is a multi-facet programming language for the JVM.
 Further details can be found at the http://groovy.apache.org website.
 
 ${ stableBuild ?
-        (newRelease ? '''We are sure you'll enjoy the features in this new version of Groovy.
-Your feedback on any unintentional glitches is welcome.''' :
-        '''This release is a maintenance release of the $branch branch.
+    (newRelease ?
+        '''We are sure you'll enjoy the features in this new version of Groovy.
+Your feedback on any unintentional glitches is welcome.'''
+        : """This release is a maintenance release of the $branch branch.
 It is strongly encouraged that all users using prior
-versions on this branch upgrade to this version.''') :
-        '''This is a pre-release of a new version of Groovy.
+versions on this branch upgrade to this version.""")
+    : '''This is a pre-release of a new version of Groovy.
 We greatly appreciate any feedback you can give us when using this version.'''
 }
-
 ${securityFix ? '''
 This release contains critical security fixes.
 Details can be found on http://groovy-lang.org/security.htm
@@ -355,11 +406,26 @@ report problems, and to get involved, visit the project website at
 https://groovy.apache.org/
 
 Best regards,
+
+The Apache Groovy team.
 """
     }
 }
 
-task announceReleaseOnSDKman(dependsOn: [proposeAnnouncementEmail, sdkAnnounceVersion]) {
+task promptForReleaseUpdater(dependsOn: [proposeAnnouncementEmail, sdkAnnounceVersion]) {
+    group = "Post-passed phase"
+    description = "Prompts the release manager to update the Apache Release info system"
+    doLast {
+        println '''
+If you are a PMC member of this project, we ask that you log on to:
+https://reporter.apache.org/addrelease.html?groovy
+and add your release data (version and date) to the database.
+If you are not a PMC member, please have a PMC member add this information.
+'''
+    }
+}
+
+task announceReleaseOnSDKman(dependsOn: promptForReleaseUpdater) {
     group = "Post-passed phase"
     description = "Announces the release on SDKman"
 }

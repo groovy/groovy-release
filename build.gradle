@@ -88,7 +88,15 @@ ext {
     newRelease = numVersion.endsWith('.0')
     underVersion = relVersion?.replace('.', '_')?.replace('-', '_')?.toUpperCase()
     releaseBuild = !relVersion?.toLowerCase()?.contains('snapshot')
-    stableBuild = !relVersion?.toLowerCase()?.contains('beta') && !relVersion?.toLowerCase()?.contains('rc')
+    stableBuild = releaseBuild && !relVersion?.toLowerCase()?.contains('beta') && !relVersion?.toLowerCase()?.contains('rc')
+    if (stableBuild) {
+        def parts = relVersion.split(/\./)
+        baseVersion = parts.with{ "${it[0]}.${it[1]}.0"  }
+        nextVersion = parts.with{ "${it[0]}.${it[1]}.${it[2].toInteger() + 1}"  }
+        if (!newRelease) {
+            prevVersion = parts.with{ "${it[0]}.${it[1]}.${it[2].toInteger() - 1}"  }
+        }
+    }
     devWorkspaceRoot = "$project.buildDir/svn-dev-workspace-$branch"
     devWorkspace = "$devWorkspaceRoot/$relVersion"
     releaseWorkspaceRoot = "$project.buildDir/svn-release-workspace-$branch"
@@ -110,6 +118,7 @@ task assumesRelVersion(dependsOn: assumesBranch) {
 
 apply from: 'gradle/phase1.gradle'
 apply from: 'gradle/phase2.gradle'
+apply from: 'gradle/adhoc.gradle'
 
 task phase1 {
     dependsOn 'prepareVoteThread'

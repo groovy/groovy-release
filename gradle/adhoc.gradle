@@ -1,0 +1,79 @@
+import groovyx.net.http.RESTClient
+import org.apache.tools.ant.taskdefs.condition.Os
+import static groovyx.net.http.ContentType.JSON
+
+buildscript {
+    repositories {
+        jcenter()
+        maven {
+            url "https://plugins.gradle.org/m2/"
+        }
+    }
+
+    dependencies {
+        classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
+        classpath 'org.hidetake:gradle-ssh-plugin:2.7.0'
+    }
+}
+
+ssh.settings {
+    dryRun = project.hasProperty('dryRun')
+    // TODO explore whether this can be made more secure - below not working on windows
+//    knownHosts = file(System.getProperty('user.home') + '/.ssh/known_hosts')
+    knownHosts = allowAnyHosts
+}
+
+remotes {
+    ciServer {
+        host = 'ci.groovy-lang.org'
+        user = findProperty('ciserver.user')
+        password = findProperty('ciserver.password')
+        //identity = file('id_rsa')
+    }
+}
+
+// use Exec rather than GradleBuild to avoid any issues between gradle versions
+task websiteBuild(type: Exec, dependsOn: [assumesRelVersion, checkoutGroovyWebsite]) {
+    workingDir stagingWebsiteDir
+    def theArgs = []
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        theArgs += ['cmd', '/C', 'gradlew.bat']
+    } else {
+        theArgs << 'gradlew'
+    }
+    theArgs << 'webzip'
+    commandLine theArgs
+}
+
+// NOTE: not normally needed as part of a release since the CI server does
+// this automatically upon commit of the changed website
+task websitePublish(dependsOn: websiteBuild) {
+    description = "Manual upload of documentation to the Groovy website server"
+    doLast {
+        println "WARNING: result might be overridden by CI server"
+        ssh.run {
+            session(remotes.ciServer) {
+                execute 'uname -a'
+                file("$stagingWebsiteDir/site/build/site").listFiles().each {
+                    put from: it, into: '/var/www/beta'
+                }
+                //execute 'chmod -R a+r /var/www/beta'
+            }
+        }
+    }
+}
+
+// saves having to do this manually
+task unreleaseOnJira(dependsOn: jiraCheckPhase2) {
+    description = "Unrelease on Jira if the VOTE is cancelled"
+    doLast {
+        def jira = new RESTClient('https://issues.apache.org/jira/rest/api/2/')
+        jira.headers['Authorization'] = 'Basic ' + "$apacheUser:$apachePassword".getBytes('iso-8859-1').encodeBase64()
+        def resp = jira.put(
+                path: "version/$versionId",
+                body: /{ "released": false, "releaseDate": null }/,
+                requestContentType: JSON
+        )
+        assert resp.status == 200
+    }
+}
