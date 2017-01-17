@@ -57,8 +57,7 @@ sdkman {
     consumerToken = findProperty('gvm.consumerPassword')
     candidate = "groovy"
     version = "$relVersion"
-    url = "http://groovy-lang.org/download.html"
-    //url = "http://www.apache.org/dyn/closer.cgi/groovy/${relVersion}/sources/apache-groovy-src-${relVersion}.zip"
+    url = "http://dl.bintray.com/groovy/maven/apache-groovy-binary-${relVersion}.zip"
     hashtag = "#groovylang"
 }
 
