@@ -390,7 +390,7 @@ We greatly appreciate any feedback you can give us when using this version.'''
 }
 ${securityFix ? '''
 This release contains critical security fixes.
-Details can be found on http://groovy-lang.org/security.htm
+Details can be found on http://groovy-lang.org/security.html
 ''' : '' }
 This release includes $fixCount bug fixes/improvements as outlined in the changelog:
 https://issues.apache.org/jira/secure/ReleaseNote.jspa?projectId=$projectId&version=$versionId
