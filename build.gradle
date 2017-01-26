@@ -64,11 +64,11 @@ buildscript {
     }
 
     dependencies {
-        classpath 'org.ajoberstar:grgit:1.7.0'
-        classpath 'at.bxm.gradleplugins:gradle-svntools-plugin:2.1'
-        classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
-        classpath 'org.hidetake:gradle-ssh-plugin:2.7.0'
-        classpath "gradle.plugin.io.sdkman:gradle-sdkvendor-plugin:1.1.1"
+        classpath "org.ajoberstar:grgit:${getProperty('version.grgit')}"
+        classpath "at.bxm.gradleplugins:gradle-svntools-plugin:${getProperty('version.svntools')}"
+        classpath "org.codehaus.groovy.modules.http-builder:http-builder:${getProperty('version.httpbuilder')}"
+        classpath "org.hidetake:gradle-ssh-plugin:${getProperty('version.sshplugin')}"
+        classpath "gradle.plugin.io.sdkman:gradle-sdkvendor-plugin:${getProperty('version.sdkmanplugin')}"
     }
 }
 
@@ -85,16 +85,16 @@ ext {
     }
     relVersion = project.findProperty('releaseVersion')
     numVersion = relVersion?.find(/^[\d\.]+/)
-    newRelease = numVersion.endsWith('.0')
+    newRelease = numVersion?.endsWith('.0')
     underVersion = relVersion?.replace('.', '_')?.replace('-', '_')?.toUpperCase()
     releaseBuild = !relVersion?.toLowerCase()?.contains('snapshot')
     stableBuild = releaseBuild && !relVersion?.toLowerCase()?.contains('beta') && !relVersion?.toLowerCase()?.contains('rc')
     if (stableBuild) {
-        def parts = relVersion.split(/\./)
-        baseVersion = parts.with{ "${it[0]}.${it[1]}.0"  }
-        nextVersion = parts.with{ "${it[0]}.${it[1]}.${it[2].toInteger() + 1}"  }
+        def parts = relVersion?.split(/\./)
+        baseVersion = parts?.with{ "${it[0]}.${it[1]}.0"  }
+        nextVersion = parts?.with{ "${it[0]}.${it[1]}.${it[2].toInteger() + 1}"  }
         if (!newRelease) {
-            prevVersion = parts.with{ "${it[0]}.${it[1]}.${it[2].toInteger() - 1}"  }
+            prevVersion = parts?.with{ "${it[0]}.${it[1]}.${it[2].toInteger() - 1}"  }
         }
     }
     devWorkspaceRoot = "$project.buildDir/svn-dev-workspace-$branch"
@@ -110,11 +110,13 @@ task assumesBranch {
     }
 }
 
-task assumesRelVersion(dependsOn: assumesBranch) {
+task assumesRelVersion {
     doLast {
         assert relVersion, "Required property 'releaseVersion' not set"
     }
 }
+
+task assumesPropsSet(dependsOn: [assumesBranch, assumesRelVersion])
 
 apply from: 'gradle/phase1.gradle'
 apply from: 'gradle/phase2.gradle'

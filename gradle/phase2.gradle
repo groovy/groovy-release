@@ -18,11 +18,11 @@ buildscript {
     }
 
     dependencies {
-        classpath 'org.ajoberstar:grgit:1.7.0'
-        classpath 'at.bxm.gradleplugins:gradle-svntools-plugin:2.1'
-        classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
-        classpath 'org.hidetake:gradle-ssh-plugin:2.7.0'
-        classpath "gradle.plugin.io.sdkman:gradle-sdkvendor-plugin:1.1.1"
+        classpath "org.ajoberstar:grgit:${getProperty('version.grgit')}"
+        classpath "at.bxm.gradleplugins:gradle-svntools-plugin:${getProperty('version.svntools')}"
+        classpath "org.codehaus.groovy.modules.http-builder:http-builder:${getProperty('version.httpbuilder')}"
+        classpath "org.hidetake:gradle-ssh-plugin:${getProperty('version.sshplugin')}"
+        classpath "gradle.plugin.io.sdkman:gradle-sdkvendor-plugin:${getProperty('version.sdkmanplugin')}"
     }
 }
 
@@ -61,7 +61,7 @@ sdkman {
     hashtag = "#groovylang"
 }
 
-task jiraCheckPhase2 {
+task jiraCheckPhase2(dependsOn: assumesRelVersion) {
     doLast {
         def jira = new RESTClient('https://issues.apache.org/jira/rest/api/2/')
         def resp = jira.get(path: 'project/GROOVY/versions')
@@ -173,7 +173,6 @@ task copyReleaseArtifacts(type: Copy, dependsOn: prepareSvnReleaseWorkspace) {
 }
 
 task addSvnReleaseFiles(type: SvnAdd, dependsOn: copyReleaseArtifacts) {
-    // TODO check whether this is needed since commit seems to do an add anyway?
     description = "Adds the changed files to dist svn"
     add releaseWorkspace
     recursive true
@@ -184,38 +183,22 @@ task deleteSvnDevFiles(type: SvnDelete, dependsOn: addSvnReleaseFiles) {
     delete devWorkspace
 }
 
-task uploadToApacheReleaseServer(dependsOn: deleteSvnDevFiles) {
-    // svntools has no move so add and delete explicitly
-    group = "Post-passed phase"
-    description = "Moves the artifacts from the DEV svn repo to the RELEASE svn repo"
-    doLast {
-        // less declarative than ideal but we want deferred operation since
-        // svn plugin assumes list of files to commit is known at config time
-        def commitInternal = project.tasks.create(name: "commitAdd", type: GradleBuild)
-        commitInternal.startParameter.projectProperties = gradle.startParameter.projectProperties
-        commitInternal.tasks = ['commitAddToReleaseInternal']
-        commitInternal.execute()
-        commitInternal = project.tasks.create(name: "commitDelete", type: GradleBuild)
-        commitInternal.startParameter.projectProperties = gradle.startParameter.projectProperties
-        commitInternal.tasks = ['commitDeleteFromDevInternal']
-        commitInternal.execute()
-    }
-}
-
-task commitDeleteFromDevInternal(type: SvnCommit) {
-    // NOTE: this still requires some manual cleanup due to:
-    // https://github.com/martoe/gradle-svntools-plugin/issues/36
-    source << file(devWorkspaceRoot)
+task commitDeleteFromDevSvn(type: SvnCommit, dependsOn: deleteSvnDevFiles) {
+    description = "Deletes the version from the DEV staging area"
+    source << devWorkspaceRoot
+    recursive = true
     commitMessage = "Deleting version $relVersion from the DEV staging area"
 }
 
-task commitAddToReleaseInternal(type: SvnCommit) {
+task commitAddToReleaseSvn(type: SvnCommit, dependsOn: addSvnReleaseFiles) {
     source << releaseWorkspace
-    def tree = fileTree(releaseWorkspace).include('**/*')
-    tree.visit {
-        source << "$releaseWorkspace/$it.path"
-    }
     commitMessage = "Releasing version $relVersion"
+}
+
+task uploadToApacheReleaseServer(dependsOn: [commitDeleteFromDevSvn, commitAddToReleaseSvn]) {
+    // svntools has no move so add and delete explicitly
+    group = "Post-passed phase"
+    description = "Moves the artifacts from the DEV svn repo to the RELEASE svn repo"
 }
 
 task uploadDocumentationToGroovyWebsite(dependsOn: uploadToApacheReleaseServer) {

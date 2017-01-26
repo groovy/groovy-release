@@ -1,5 +1,8 @@
 import groovyx.net.http.RESTClient
+import org.ajoberstar.grgit.Credentials
+import org.ajoberstar.grgit.util.JGitUtil
 import org.apache.tools.ant.taskdefs.condition.Os
+
 import static groovyx.net.http.ContentType.JSON
 
 buildscript {
@@ -11,8 +14,11 @@ buildscript {
     }
 
     dependencies {
-        classpath 'org.codehaus.groovy.modules.http-builder:http-builder:0.7.1'
-        classpath 'org.hidetake:gradle-ssh-plugin:2.7.0'
+        classpath "org.ajoberstar:grgit:${getProperty('version.grgit')}"
+        classpath "at.bxm.gradleplugins:gradle-svntools-plugin:${getProperty('version.svntools')}"
+        classpath "org.codehaus.groovy.modules.http-builder:http-builder:${getProperty('version.httpbuilder')}"
+        classpath "org.hidetake:gradle-ssh-plugin:${getProperty('version.sshplugin')}"
+        classpath "gradle.plugin.io.sdkman:gradle-sdkvendor-plugin:${getProperty('version.sdkmanplugin')}"
     }
 }
 
@@ -57,13 +63,30 @@ task websitePublish(dependsOn: websiteBuild) {
                 file("$stagingWebsiteDir/site/build/site").listFiles().each {
                     put from: it, into: '/var/www/beta'
                 }
-                //execute 'chmod -R a+r /var/www/beta'
+//                execute 'chgrp -R teamcity /var/www/beta'
             }
         }
     }
 }
 
-// saves having to do this manually
+task untagVersion(dependsOn: assumesPropsSet) {
+    doLast {
+        def apacheCredentials = new Credentials(username: apacheUser, password: apachePassword)
+        def grgit = grgitClass.open(dir: stagingDir, creds: apacheCredentials)
+        def tagName = "GROOVY_$underVersion"
+        def tag = null
+        try {
+            tag = JGitUtil.resolveTag(grgit.repository, tagName)
+        } catch (ignore) {
+            println "Exception message: " + ignore.message
+        }
+        assert tag, "Tag $tagName is supposed to exist but doesn't!"
+        grgit.tag.remove(names: [tagName])
+        grgit.push(tags: true)
+        grgit.push(refsOrSpecs: [":refs/tags/$tagName"])
+    }
+}
+
 task unreleaseOnJira(dependsOn: jiraCheckPhase2) {
     description = "Unrelease on Jira if the VOTE is cancelled"
     doLast {
