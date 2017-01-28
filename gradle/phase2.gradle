@@ -293,6 +293,7 @@ task pushGroovyWebsite(dependsOn: updateGroovySitemap) {
         grgit.add(patterns: ['sitemap.groovy'])
         def commit = grgit.commit(message: "Release $relVersion: update sitemap")
         println "@ $commit.abbreviatedId ($commit.shortMessage)"
+        grgit.push()
     }
 }
 updateGroovySitemap.onlyIf{ stableBuild }
@@ -349,15 +350,27 @@ task createNextVersionInJira(dependsOn: [makeDefaultOnSDKman, jiraCheckPhase2]) 
 
 task bumpVersionInGit(dependsOn: createNextVersionInJira) {
     group = "Post-passed phase"
-    description = "The version in the gradle.properties file in the repo should be bumped"
+    description = "The version in the gradle.properties file in the branch repo should be bumped"
     doLast {
-        println "TODO bumpVersionInGit"
+        // TODO should this handle beta-1 => beta-2, rc-1 => rc-2 etc.
+        def apacheCredentials = new Credentials(username: apacheUser, password: apachePassword)
+        def grgit = grgitClass.open(dir: stagingDir, creds: apacheCredentials)
+        grgit.checkout(branch: branch)
+        def propsFile = file("$stagingDir/gradle.properties")
+        def propsText = propsFile.text
+        propsText = propsText.replace(numVersion + '-SNAPSHOT', nextVersion + '-SNAPSHOT')
+        propsText = propsText.replace(numVersion + '.SNAPSHOT', nextVersion + '.SNAPSHOT')
+        propsFile.text = propsText
+        grgit.add(patterns: ['gradle.properties'])
+        def commit = grgit.commit(message: "Bump version on $branch branch (test only)")
+        println "@ $commit.abbreviatedId ($commit.shortMessage)"
+        grgit.push()
     }
 }
 
 task proposeAnnouncementEmail(dependsOn: [bumpVersionInGit, jiraCheckPhase2]) {
     group = "Post-passed phase"
-    description = "Generates an [ANN] thread to be tweaked and sent to the dev@, user@ and announce@ mailing lists"
+    description = "Generates an [ANNOUNCE] thread to be tweaked and sent to the dev@, user@ and announce@ mailing lists"
     doLast {
         def securityFix = project.hasProperty('securityFix')
         println """"
