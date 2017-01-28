@@ -3,7 +3,6 @@ import at.bxm.gradleplugins.svntools.tasks.SvnAdd
 import at.bxm.gradleplugins.svntools.tasks.SvnCheckout
 import at.bxm.gradleplugins.svntools.tasks.SvnCommit
 import at.bxm.gradleplugins.svntools.tasks.SvnDelete
-import groovy.json.JsonSlurper
 import groovyx.net.http.RESTClient
 import org.ajoberstar.grgit.Credentials
 
@@ -89,12 +88,23 @@ task promoteOnBintray(dependsOn: jiraCheckPhase2) {
     doLast {
         def artifactory = new RESTClient('https://groovy.jfrog.io/groovy/')
         artifactory.headers['Authorization'] = 'Basic ' + "$artifactoryUser:$artifactoryPassword".getBytes('iso-8859-1').encodeBase64()
-        def resp = artifactory.get(path: 'api/build/groovy')
+        def resp = artifactory.get(path: 'api/build/groovy', contentType: JSON)
         assert resp.status == 200
-        def builds = new JsonSlurper().parse(resp.data.bytes).buildsNumbers
-        // TODO this gets the latest build but it won't be that if we are releasing
-        // multiple branches at the same time, e.g. 2.4.9 and 2.5.0-beta-1
-        def buildNum = builds.sort{ it.started }[-1].uri[1..-1]
+        // sort to minimise work - normally we want the last started
+        def builds = resp.data.buildsNumbers.sort{ it.started }
+        // check version - in case we are releasing multiple builds at the one time
+        println "----------------"
+        def build = builds.find {
+            resp = artifactory.get(path: 'api/build/groovy/' + it.uri, contentType: JSON)
+            assert resp.status == 200
+            def coreModuleId = resp.data.buildInfo.modules*.id.find{ it.startsWith('org.codehaus.groovy:groovy:') }
+            def found = coreModuleId.endsWith(':' + relVersion)
+            println "${found ? 'FOUND' : 'SKIPPING'} $coreModuleId @ ${it.uri}"
+            found
+        }
+        println "----------------"
+        assert build, "No build matching $relVersion found in artifactory"
+        def buildNum = build.uri[1..-1]
         def body = /{
             "dryRun" : ${project.hasProperty('dryRun').toString()},
             "publish" : true,
