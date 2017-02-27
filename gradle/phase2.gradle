@@ -362,7 +362,7 @@ task bumpVersionInGit(dependsOn: createNextVersionInJira) {
         propsText = propsText.replace(numVersion + '.SNAPSHOT', nextVersion + '.SNAPSHOT')
         propsFile.text = propsText
         grgit.add(patterns: ['gradle.properties'])
-        def commit = grgit.commit(message: "Bump version on $branch branch (test only)")
+        def commit = grgit.commit(message: "Bump version on $branch branch")
         println "@ $commit.abbreviatedId ($commit.shortMessage)"
         grgit.push()
     }
