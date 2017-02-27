@@ -91,14 +91,14 @@ task promoteOnBintray(dependsOn: jiraCheckPhase2) {
         def resp = artifactory.get(path: 'api/build/groovy', contentType: JSON)
         assert resp.status == 200
         // sort to minimise work - normally we want the last started
-        def builds = resp.data.buildsNumbers.sort{ it.started }
+        def builds = resp.data.buildsNumbers.sort{ it.started }.reverse()
         // check version - in case we are releasing multiple builds at the one time
         println "----------------"
         def build = builds.find {
             resp = artifactory.get(path: 'api/build/groovy/' + it.uri, contentType: JSON)
             assert resp.status == 200
             def coreModuleId = resp.data.buildInfo.modules*.id.find{ it.startsWith('org.codehaus.groovy:groovy:') }
-            def found = coreModuleId.endsWith(':' + relVersion)
+            def found = coreModuleId?.endsWith(':' + relVersion)
             println "${found ? 'FOUND' : 'SKIPPING'} $coreModuleId @ ${it.uri}"
             found
         }
@@ -296,7 +296,7 @@ task pushGroovyWebsite(dependsOn: updateGroovySitemap) {
         grgit.push()
     }
 }
-updateGroovySitemap.onlyIf{ stableBuild }
+pushGroovyWebsite.onlyIf{ stableBuild }
 
 task waitForWebsitePublication(dependsOn: pushGroovyWebsite) {
     group = "Post-passed phase"
