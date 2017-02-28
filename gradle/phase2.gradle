@@ -202,6 +202,7 @@ task commitDeleteFromDevSvn(type: SvnCommit, dependsOn: deleteSvnDevFiles) {
 
 task commitAddToReleaseSvn(type: SvnCommit, dependsOn: addSvnReleaseFiles) {
     source << releaseWorkspace
+    recursive = true
     commitMessage = "Releasing version $relVersion"
 }
 
