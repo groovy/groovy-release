@@ -263,7 +263,9 @@ task maybeUpdateDocumentationSymlink(dependsOn: findGroovyVersions) {
         ssh.run {
             session(remotes.ciServer) {
                 execute 'uname -a'
-                execute "ln -s /var/www/docs/docs/groovy-$relVersion latest"
+                execute "cd /var/www/docs/docs; ln -s -f -T groovy-$relVersion latest"
+                execute "chgrp -h teamcity /var/www/docs/docs/latest"
+//                execute "chown -h teamcity /var/www/docs/docs/latest"
             }
         }
     }
