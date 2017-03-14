@@ -88,7 +88,7 @@ ext {
     newRelease = numVersion?.endsWith('.0')
     underVersion = relVersion?.replace('.', '_')?.replace('-', '_')?.toUpperCase()
     releaseBuild = !relVersion?.toLowerCase()?.contains('snapshot')
-    stableBuild = releaseBuild && !relVersion?.toLowerCase()?.contains('beta') && !relVersion?.toLowerCase()?.contains('rc')
+    stableBuild = releaseBuild && !relVersion?.toLowerCase()?.contains('alpha') && !relVersion?.toLowerCase()?.contains('beta') && !relVersion?.toLowerCase()?.contains('rc')
     if (stableBuild) {
         def parts = relVersion?.split(/\./)
         baseVersion = parts?.with{ "${it[0]}.${it[1]}.0"  }
