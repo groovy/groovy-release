@@ -56,13 +56,14 @@ sdkman {
     consumerToken = findProperty('gvm.consumerPassword')
     candidate = "groovy"
     version = "$relVersion"
-    url = "http://dl.bintray.com/groovy/maven/apache-groovy-binary-${relVersion}.zip"
+    url = "http://dl.bintray.com/groovy/maven/apache-groovy-sdk-${relVersion}.zip"
     hashtag = "#groovylang"
 }
 
 task jiraCheckPhase2(dependsOn: assumesRelVersion) {
     doLast {
         def jira = new RESTClient('https://issues.apache.org/jira/rest/api/2/')
+//        jira.headers['Authorization'] = 'Basic ' + "$apacheUser:$apachePassword".getBytes('iso-8859-1').encodeBase64()
         def resp = jira.get(path: 'project/GROOVY/versions')
         assert resp.status == 200
         def versionFields = resp.data.find { it.name == relVersion }
@@ -320,6 +321,7 @@ task waitForWebsitePublication(dependsOn: pushGroovyWebsite) {
         assert found, 'Timed out waiting for website to be published - please check manually'
     }
 }
+waitForWebsitePublication.onlyIf{ stableBuild }
 
 task publishToSDKman(dependsOn: [waitForWebsitePublication, maybeUpdateDocumentationSymlink, sdkReleaseVersion]) {
     group = "Post-passed phase"
@@ -331,6 +333,7 @@ task makeDefaultOnSDKman(dependsOn: [publishToSDKman, sdkDefaultVersion]) {
     description = "Make it the default version on SDKman"
 }
 makeDefaultOnSDKman.onlyIf{ rootProject.ext.newDefault }
+sdkDefaultVersion.onlyIf{ rootProject.ext.newDefault }
 
 task createNextVersionInJira(dependsOn: [makeDefaultOnSDKman, jiraCheckPhase2]) {
     group = "Post-passed phase"
@@ -420,7 +423,7 @@ The Apache Groovy team.
     }
 }
 
-task promptForReleaseUpdater(dependsOn: [proposeAnnouncementEmail, sdkAnnounceVersion]) {
+task promptForReleaseUpdater(dependsOn: proposeAnnouncementEmail) {
     group = "Post-passed phase"
     description = "Prompts the release manager to update the Apache Release info system"
     doLast {
@@ -433,7 +436,7 @@ If you are not a PMC member, please have a PMC member add this information.
     }
 }
 
-task announceReleaseOnSDKman(dependsOn: promptForReleaseUpdater) {
+task announceReleaseOnSDKman(dependsOn: [promptForReleaseUpdater, sdkAnnounceVersion]) {
     group = "Post-passed phase"
     description = "Announces the release on SDKman"
 }
