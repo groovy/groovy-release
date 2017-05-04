@@ -250,7 +250,7 @@ task findGroovyVersions(dependsOn: checkoutGroovyWebsite) {
         def majorMinor = { String s -> s.split(/\./).with{ it[0].toInteger() * 100 + it[1].toInteger() } }
         def versions = Eval.me(versionsText)
         def relMajorMinor = majorMinor(relVersion)
-        rootProject.ext.foundNewer = versions.collect{ majorMinor(it) }.any{ it > relMajorMinor }
+        rootProject.ext.foundNewer = versions.findAll{ !(it.contains('alpha') || it.contains('beta') || it.contains('rc')) }.collect{ majorMinor(it) }.any{ it > relMajorMinor }
         rootProject.ext.newDefault = project.hasProperty('forceDefault') ||
                 (!project.hasProperty('skipDefault') && stableBuild && !foundNewer)
     }
