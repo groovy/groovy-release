@@ -45,7 +45,7 @@ task websiteBuild(type: Exec, dependsOn: [assumesRelVersion, checkoutGroovyWebsi
     if (Os.isFamily(Os.FAMILY_WINDOWS)) {
         theArgs += ['cmd', '/C', 'gradlew.bat']
     } else {
-        theArgs << 'gradlew'
+        theArgs << './gradlew'
     }
     theArgs << 'webzip'
     commandLine theArgs
