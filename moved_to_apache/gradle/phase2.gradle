@@ -167,7 +167,7 @@ task publishZipsOnBintray(dependsOn: [jiraCheckPhase2, assumesRelVersion]) {
 }
 
 
-task cleanSvnReleaseWorkspace(type: Delete, dependsOn: [assumesRelVersion, synchronizeWithMavenCentral]) {
+task cleanSvnReleaseWorkspace(type: Delete, dependsOn: [assumesRelVersion, synchronizeWithMavenCentral, publishZipsOnBintray]) {
     delete releaseWorkspaceRoot
 }
 
